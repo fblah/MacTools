@@ -261,26 +261,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             triangle.close()
             mark.append(triangle)
 
+            let dYOffset: CGFloat = -1.0
             let outerD = NSBezierPath()
-            outerD.move(to: NSPoint(x: rect.minX + 6.4, y: rect.minY + 6.1))
-            outerD.line(to: NSPoint(x: rect.minX + 6.4, y: rect.maxY - 6.1))
-            outerD.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 6.1))
+            outerD.move(to: NSPoint(x: rect.minX + 6.4, y: rect.minY + 6.1 + dYOffset))
+            outerD.line(to: NSPoint(x: rect.minX + 6.4, y: rect.maxY - 6.1 + dYOffset))
+            outerD.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 6.1 + dYOffset))
             outerD.curve(
-                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 6.1),
-                controlPoint1: NSPoint(x: rect.maxX - 4.7, y: rect.maxY - 6.1),
-                controlPoint2: NSPoint(x: rect.maxX - 4.7, y: rect.minY + 6.1)
+                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 6.1 + dYOffset),
+                controlPoint1: NSPoint(x: rect.maxX - 4.7, y: rect.maxY - 6.1 + dYOffset),
+                controlPoint2: NSPoint(x: rect.maxX - 4.7, y: rect.minY + 6.1 + dYOffset)
             )
             outerD.close()
             mark.append(outerD)
 
             let innerCounter = NSBezierPath()
-            innerCounter.move(to: NSPoint(x: rect.minX + 8.0, y: rect.minY + 7.35))
-            innerCounter.line(to: NSPoint(x: rect.minX + 8.0, y: rect.maxY - 7.35))
-            innerCounter.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 7.35))
+            innerCounter.move(to: NSPoint(x: rect.minX + 8.0, y: rect.minY + 7.35 + dYOffset))
+            innerCounter.line(to: NSPoint(x: rect.minX + 8.0, y: rect.maxY - 7.35 + dYOffset))
+            innerCounter.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 7.35 + dYOffset))
             innerCounter.curve(
-                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 7.35),
-                controlPoint1: NSPoint(x: rect.maxX - 6.15, y: rect.maxY - 7.35),
-                controlPoint2: NSPoint(x: rect.maxX - 6.15, y: rect.minY + 7.35)
+                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 7.35 + dYOffset),
+                controlPoint1: NSPoint(x: rect.maxX - 6.15, y: rect.maxY - 7.35 + dYOffset),
+                controlPoint2: NSPoint(x: rect.maxX - 6.15, y: rect.minY + 7.35 + dYOffset)
             )
             innerCounter.close()
             mark.append(innerCounter)
