@@ -37,6 +37,28 @@ Scripts/package_app.sh
 open dist/MacTools.app
 ```
 
+## Release
+
+MacTools uses Sparkle for app updates and GitHub Releases for distribution.
+
+To publish a release:
+
+```bash
+Scripts/bump_version.sh 0.2.0
+git add VERSION
+git commit -m "Bump version to 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+The release workflow builds `MacTools.app`, zips it, signs the update archive for Sparkle, writes `appcast.xml`, and attaches both files to the GitHub release.
+
+The app checks this feed:
+
+```text
+https://github.com/havokentity/MacTools/releases/latest/download/appcast.xml
+```
+
 ## Roadmap
 
 - Add more toolbox apps behind the sidebar

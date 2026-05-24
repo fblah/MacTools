@@ -1,11 +1,17 @@
 import AppKit
 import Combine
+import Sparkle
 import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = SystemMonitor()
     private let popover = NSPopover()
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
     private var statusItem: NSStatusItem?
     private var snapshotSink: AnyCancellable?
     private var eventMonitor: Any?
@@ -25,9 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
-        let rootView = ToolPopoverView(monitor: monitor) { [weak self] in
-            self?.quit()
-        }
+        let rootView = ToolPopoverView(
+            monitor: monitor,
+            onCheckForUpdates: { [weak self] in
+                self?.updaterController.checkForUpdates(nil)
+            },
+            onQuit: { [weak self] in
+                self?.quit()
+            }
+        )
 
         popover.contentSize = NSSize(width: 540, height: 560)
         popover.behavior = .transient

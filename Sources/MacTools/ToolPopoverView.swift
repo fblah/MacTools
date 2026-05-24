@@ -2,11 +2,15 @@ import SwiftUI
 
 struct ToolPopoverView: View {
     @ObservedObject var monitor: SystemMonitor
+    var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            SystemMonitorHeader(onQuit: onQuit)
+            SystemMonitorHeader(
+                onCheckForUpdates: onCheckForUpdates,
+                onQuit: onQuit
+            )
 
             LazyVGrid(columns: columns, spacing: 12) {
                 LoadCard(snapshot: monitor.snapshot)
@@ -39,6 +43,7 @@ struct ToolPopoverView: View {
 }
 
 private struct SystemMonitorHeader: View {
+    var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
     var body: some View {
@@ -48,6 +53,14 @@ private struct SystemMonitorHeader: View {
                 .foregroundStyle(.secondary)
 
             Spacer()
+
+            Button(action: onCheckForUpdates) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Check for Updates")
 
             Button(action: onQuit) {
                 Image(systemName: "gearshape.fill")

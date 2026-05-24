@@ -13,9 +13,15 @@ let package = Package(
             targets: ["MacTools"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.2")
+    ],
     targets: [
         .executableTarget(
             name: "MacTools",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/MacTools"
         )
     ]
