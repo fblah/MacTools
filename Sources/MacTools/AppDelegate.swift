@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: 246)
+        let item = NSStatusBar.system.statusItem(withLength: 218)
         systemMonitorStatusItem = item
 
         let statusView = SystemMonitorStatusView()
