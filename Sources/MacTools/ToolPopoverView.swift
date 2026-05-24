@@ -80,15 +80,15 @@ private struct ToolboxHeader: View {
                 } label: {
                     VStack(spacing: 0) {
                         Text(section.rawValue)
-                            .font(.system(size: 22, weight: section == selectedSection ? .semibold : .medium))
+                            .font(.system(size: 18, weight: section == selectedSection ? .semibold : .medium))
                             .foregroundStyle(section == selectedSection ? .primary : .secondary)
-                            .frame(height: 58)
+                            .frame(height: 46)
 
                         Rectangle()
                             .fill(section == selectedSection ? Color.accentColor : Color.clear)
                             .frame(height: 3)
                     }
-                    .frame(width: 156)
+                    .frame(width: 126)
                 }
                 .buttonStyle(.plain)
             }
@@ -97,26 +97,26 @@ private struct ToolboxHeader: View {
 
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 21, weight: .medium))
+                    .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(.secondary)
 
                 TextField("Search", text: $searchText)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 21, weight: .regular))
+                    .font(.system(size: 17, weight: .regular))
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 14)
             .frame(maxWidth: .infinity)
 
             Button(action: onSettings) {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 25, weight: .bold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.primary)
-                    .frame(width: 58, height: 58)
+                    .frame(width: 46, height: 46)
             }
             .buttonStyle(.plain)
             .help("Settings")
         }
-        .frame(height: 62)
+        .frame(height: 50)
     }
 }
 
@@ -165,10 +165,10 @@ private struct DashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             Text("D'Monte's Toolbox")
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
 
             Text("Enable tools in Library. Each enabled tool gets its own menu bar item.")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
 
             if visibleTools.isEmpty {
@@ -179,10 +179,10 @@ private struct DashboardView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 26)
-        .padding(.bottom, 28)
-        .frame(minHeight: 556, alignment: .topLeading)
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 22)
+        .frame(minHeight: 448, alignment: .topLeading)
     }
 
     private func filtered(_ tools: [ToolboxTool]) -> [ToolboxTool] {
@@ -215,7 +215,7 @@ private struct LibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Library")
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
 
             ForEach(tools) { tool in
                 LibraryToolRow(
@@ -228,10 +228,10 @@ private struct LibraryView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 26)
-        .padding(.bottom, 28)
-        .frame(minHeight: 556, alignment: .topLeading)
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 22)
+        .frame(minHeight: 448, alignment: .topLeading)
     }
 
     private func binding(for tool: ToolboxTool) -> Binding<Bool> {
@@ -258,7 +258,7 @@ private struct ToolGrid: View {
     }
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.fixed(124), spacing: 28), count: 5)
+        Array(repeating: GridItem(.fixed(96), spacing: 20), count: 5)
     }
 }
 
@@ -273,11 +273,11 @@ private struct ToolboxIcon: View {
                 ZStack {
                     Circle()
                         .fill(tool.tint.opacity(0.13))
-                        .frame(width: 88, height: 88)
+                        .frame(width: 70, height: 70)
 
                     Image(systemName: tool.icon)
                         .symbolRenderingMode(.hierarchical)
-                        .font(.system(size: 42, weight: .semibold))
+                        .font(.system(size: 32, weight: .semibold))
                         .foregroundStyle(tool.tint)
 
                     Text(snapshot.cpuUsage.percentString)
@@ -286,14 +286,14 @@ private struct ToolboxIcon: View {
                         .padding(.vertical, 3)
                         .background(Color(nsColor: .windowBackgroundColor))
                         .clipShape(Capsule())
-                        .offset(x: 30, y: 30)
+                        .offset(x: 24, y: 24)
                 }
 
                 Text(tool.rawValue)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                    .frame(width: 124, height: 44, alignment: .top)
+                    .frame(width: 96, height: 34, alignment: .top)
             }
             .contentShape(Rectangle())
         }
@@ -313,16 +313,16 @@ private struct LibraryToolRow: View {
                 .symbolRenderingMode(.hierarchical)
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(tool.tint)
-                .frame(width: 46, height: 46)
+                .frame(width: 40, height: 40)
                 .background(tool.tint.opacity(0.12))
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(tool.rawValue)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
 
                 Text("CPU \(snapshot.cpuUsage.percentString)  RAM \(snapshot.memoryUsage.percentString)")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
@@ -344,7 +344,7 @@ private struct LibraryToolRow: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
         }
-        .padding(14)
+        .padding(12)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
@@ -354,11 +354,11 @@ private struct EmptyToolsView: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "switch.2")
-                .font(.system(size: 42, weight: .semibold))
+                .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(.secondary)
 
             Text("No tools enabled")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, minHeight: 280)
@@ -373,31 +373,31 @@ struct SystemMonitorPopoverView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("System Monitor")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
                 Button(action: onSettings) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 21, weight: .bold))
+                        Image(systemName: "gearshape.fill")
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
                 .help("Settings")
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
 
-            LazyVGrid(columns: columns, spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 10) {
                 LoadCard(snapshot: monitor.snapshot)
                 MemoryCard(snapshot: monitor.snapshot)
                 DiskCard(snapshot: monitor.snapshot)
                 NetworkCard(snapshot: monitor.snapshot)
             }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 22)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
 
             Spacer(minLength: 0)
         }
@@ -415,8 +415,8 @@ struct SystemMonitorPopoverView: View {
 
     private var columns: [GridItem] {
         [
-            GridItem(.flexible(), spacing: 12),
-            GridItem(.flexible(), spacing: 12)
+            GridItem(.flexible(), spacing: 10),
+            GridItem(.flexible(), spacing: 10)
         ]
     }
 }
@@ -428,7 +428,7 @@ private struct LoadCard: View {
         MonitorCard(badge: "waveform.path.ecg") {
             ArcGauge(value: snapshot.cpuUsage, color: .green, label: snapshot.cpuUsage.percentString)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             MetricTitle(icon: "cpu", title: "CPU LOAD")
             SecondaryLine(icon: "clock", text: "Uptime \(snapshot.uptime.compactDurationString)")
@@ -443,11 +443,11 @@ private struct MemoryCard: View {
         MonitorCard(badge: "memorychip") {
             ArcGauge(value: snapshot.memoryUsage, color: .green, label: snapshot.memoryUsage.percentString)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
             MetricTitle(icon: "memorychip", title: "MEMORY")
             Text("\(snapshot.memoryUsed.bytesString) of \(snapshot.memoryTotal.bytesString)")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -463,20 +463,20 @@ private struct DiskCard: View {
         MonitorCard(badge: "paintbrush.pointed") {
             VStack(alignment: .leading, spacing: 10) {
                 Text(snapshot.diskUsage.percentString)
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .font(.system(size: 21, weight: .bold, design: .rounded))
 
                 ProgressView(value: min(max(snapshot.diskUsage, 0), 1))
                     .tint(snapshot.diskUsage > 0.85 ? .yellow : .green)
                     .controlSize(.large)
-                    .frame(width: 132)
+                    .frame(width: 106)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 10)
+            Spacer(minLength: 8)
 
             MetricTitle(icon: "internaldrive", title: "Macintosh HD")
             Text("\(snapshot.diskUsed.bytesString) of \(snapshot.diskTotal.bytesString)")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -494,13 +494,13 @@ private struct NetworkCard: View {
                 downRate: snapshot.networkDownRate.compactRateString,
                 upRate: snapshot.networkUpRate.compactRateString
             )
-            .padding(.top, 14)
+            .padding(.top, 10)
 
-            Spacer(minLength: 10)
+            Spacer(minLength: 8)
 
             MetricTitle(icon: "network", title: "Ethernet")
             Text("Network")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -515,8 +515,8 @@ private struct MonitorCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             content
         }
-        .padding(18)
-        .frame(height: 178)
+        .padding(14)
+        .frame(height: 138)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -533,12 +533,12 @@ private struct MonitorCard<Content: View>: View {
         )
         .overlay(alignment: .topTrailing) {
             Image(systemName: badge)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.green.opacity(0.55))
-                .frame(width: 28, height: 28)
+                .frame(width: 23, height: 23)
                 .background(.thinMaterial)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(9)
+                .padding(7)
         }
     }
 }
@@ -561,9 +561,9 @@ private struct ArcGauge: View {
                 .rotationEffect(.degrees(90))
 
             Text(label)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .bold, design: .rounded))
         }
-        .frame(width: 120, height: 88)
+        .frame(width: 92, height: 62)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -575,11 +575,11 @@ private struct MetricTitle: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 17, weight: .bold))
-                .frame(width: 22)
+                .font(.system(size: 14, weight: .bold))
+                .frame(width: 18)
 
             Text(title)
-                .font(.system(size: 17, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -595,11 +595,11 @@ private struct SecondaryLine: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 22)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 18)
 
             Text(text)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
         }
@@ -613,7 +613,7 @@ private struct NetworkStack: View {
     var upRate: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             NetworkLine(icon: "arrow.down", value: downRate)
             NetworkLine(icon: "arrow.up", value: upRate)
         }
@@ -626,20 +626,20 @@ private struct NetworkLine: View {
     var value: String
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary.opacity(0.65))
-                .frame(width: 26, height: 26)
+                .frame(width: 21, height: 21)
                 .background(Color.secondary.opacity(0.18))
                 .clipShape(Circle())
 
             Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.system(size: 17, weight: .bold, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
         }
-        .frame(width: 150, alignment: .leading)
+        .frame(width: 118, alignment: .leading)
     }
 }
 

@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureSystemMonitorPopover() {
-        systemMonitorPopover.contentSize = NSSize(width: 520, height: 430)
+        systemMonitorPopover.contentSize = NSSize(width: 440, height: 340)
         systemMonitorPopover.behavior = .transient
         systemMonitorPopover.animates = true
         systemMonitorPopover.contentViewController = NSHostingController(
@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showToolboxPopover(from button: NSStatusBarButton) {
         closeSystemMonitorPopover()
-        toolboxPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        toolboxPopover.show(relativeTo: Self.popoverAnchorRect(for: button.bounds), of: button, preferredEdge: .minY)
         toolboxPopover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitor()
     }
@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         closeToolboxPopover()
-        systemMonitorPopover.show(relativeTo: statusView.bounds, of: statusView, preferredEdge: .minY)
+        systemMonitorPopover.show(relativeTo: Self.popoverAnchorRect(for: statusView.bounds), of: statusView, preferredEdge: .minY)
         systemMonitorPopover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitor()
     }
@@ -231,10 +231,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func preferredPopoverSize() -> NSSize {
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let width = min(760, max(600, visibleFrame.width * 0.52))
-        let height = min(620, max(500, visibleFrame.height - 120))
+        let width = min(620, max(520, visibleFrame.width * 0.42))
+        let height = min(500, max(420, visibleFrame.height - 180))
 
         return NSSize(width: width, height: height)
+    }
+
+    private static func popoverAnchorRect(for bounds: NSRect) -> NSRect {
+        NSRect(x: bounds.minX, y: bounds.minY - 8, width: bounds.width, height: 1)
     }
 
     private static func toolboxStatusImage() -> NSImage {
