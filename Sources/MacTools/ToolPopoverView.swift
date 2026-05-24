@@ -22,7 +22,8 @@ struct ToolPopoverView: View {
             ToolboxHeader(
                 selectedSection: $selectedSection,
                 searchText: $searchText,
-                onSettings: { isShowingSettings = true }
+                onSettings: { isShowingSettings = true },
+                onQuit: onQuit
             )
 
             Divider()
@@ -71,6 +72,7 @@ private struct ToolboxHeader: View {
     @Binding var selectedSection: ToolboxSection
     @Binding var searchText: String
     var onSettings: () -> Void
+    var onQuit: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -107,13 +109,18 @@ private struct ToolboxHeader: View {
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity)
 
-            Button(action: onSettings) {
+            Menu {
+                Button("Preferences...", action: onSettings)
+
+                Divider()
+
+                Button("Quit", action: onQuit)
+            } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.primary)
                     .frame(width: 46, height: 46)
             }
-            .buttonStyle(.plain)
             .help("Settings")
         }
         .frame(height: 50)
@@ -367,6 +374,7 @@ private struct EmptyToolsView: View {
 
 struct SystemMonitorPopoverView: View {
     @ObservedObject var monitor: SystemMonitor
+    var onQuit: () -> Void
     @State private var isShowingSettings = false
 
     var body: some View {
@@ -378,13 +386,20 @@ struct SystemMonitorPopoverView: View {
 
                 Spacer()
 
-                Button(action: { isShowingSettings = true }) {
+                Menu {
+                    Button("Preferences...") {
+                        isShowingSettings = true
+                    }
+
+                    Divider()
+
+                    Button("Quit", action: onQuit)
+                } label: {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.secondary)
                         .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
                 .help("Settings")
             }
             .padding(.horizontal, 18)

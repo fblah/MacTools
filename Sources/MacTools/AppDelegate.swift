@@ -69,7 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemMonitorPopover.animates = true
         systemMonitorPopover.contentViewController = NSHostingController(
             rootView: SystemMonitorPopoverView(
-                monitor: monitor
+                monitor: monitor,
+                onQuit: { [weak self] in
+                    self?.quit()
+                }
             )
         )
     }
