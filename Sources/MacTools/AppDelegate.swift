@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureToolboxStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         toolboxStatusItem = item
 
         guard let button = item.button else {
@@ -86,10 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.target = self
         button.action = #selector(togglePopover(_:))
-        button.image = NSImage(systemSymbolName: "switch.2", accessibilityDescription: "D'Monte's Toolbox")
-        button.imagePosition = .imageLeading
-        button.font = .systemFont(ofSize: 12, weight: .semibold)
-        button.title = " Toolbox"
+        button.image = Self.toolboxStatusImage()
+        button.imagePosition = .imageOnly
+        button.title = ""
+        button.toolTip = "D'Monte's Toolbox"
 
         snapshotSink = monitor.$snapshot
             .receive(on: RunLoop.main)
@@ -112,11 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             closeSystemMonitorPopover()
 
-        if let systemMonitorStatusItem {
-            NSStatusBar.system.removeStatusItem(systemMonitorStatusItem)
-            self.systemMonitorStatusItem = nil
-            self.systemMonitorStatusView = nil
-        }
+            if let systemMonitorStatusItem {
+                NSStatusBar.system.removeStatusItem(systemMonitorStatusItem)
+                self.systemMonitorStatusItem = nil
+                self.systemMonitorStatusView = nil
+            }
         }
     }
 
@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: 270)
+        let item = NSStatusBar.system.statusItem(withLength: 246)
         systemMonitorStatusItem = item
 
         let statusView = SystemMonitorStatusView()
@@ -237,4 +237,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSSize(width: width, height: height)
     }
 
+    private static func toolboxStatusImage() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            NSColor.labelColor.setStroke()
+            NSColor.labelColor.setFill()
+
+            let body = NSBezierPath(
+                roundedRect: NSRect(x: rect.minX + 2.5, y: rect.minY + 4, width: 13, height: 10),
+                xRadius: 2.5,
+                yRadius: 2.5
+            )
+            body.lineWidth = 1.7
+            body.stroke()
+
+            let handle = NSBezierPath()
+            handle.lineWidth = 1.7
+            handle.lineCapStyle = .round
+            handle.move(to: NSPoint(x: rect.minX + 6.1, y: rect.minY + 13.2))
+            handle.curve(
+                to: NSPoint(x: rect.minX + 11.9, y: rect.minY + 13.2),
+                controlPoint1: NSPoint(x: rect.minX + 6.5, y: rect.minY + 16.1),
+                controlPoint2: NSPoint(x: rect.minX + 11.5, y: rect.minY + 16.1)
+            )
+            handle.stroke()
+
+            let dMark = NSBezierPath()
+            dMark.lineWidth = 1.8
+            dMark.lineCapStyle = .round
+            dMark.lineJoinStyle = .round
+            dMark.move(to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 6.6))
+            dMark.line(to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 11.4))
+            dMark.curve(
+                to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 6.6),
+                controlPoint1: NSPoint(x: rect.minX + 11.2, y: rect.minY + 11.6),
+                controlPoint2: NSPoint(x: rect.minX + 11.2, y: rect.minY + 6.4)
+            )
+            dMark.stroke()
+
+            NSBezierPath(ovalIn: NSRect(x: rect.minX + 12.2, y: rect.minY + 7.6, width: 2.1, height: 2.1)).fill()
+
+            return true
+        }
+
+        image.isTemplate = true
+        image.accessibilityDescription = "D'Monte's Toolbox"
+
+        return image
+    }
 }

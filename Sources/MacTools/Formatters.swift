@@ -25,6 +25,36 @@ extension UInt64 {
     var compactRateString: String {
         "\(compactBytesString)/s"
     }
+
+    var statusBytesString: String {
+        let value = Double(self)
+        let kib = 1_024.0
+        let mib = kib * 1_024
+        let gib = mib * 1_024
+        let tib = gib * 1_024
+
+        if value >= tib {
+            return "\(Int(value / tib))TB"
+        }
+
+        if value >= gib {
+            return "\(Int(value / gib))GB"
+        }
+
+        if value >= mib {
+            return "\(Int(value / mib))MB"
+        }
+
+        if value >= kib {
+            return "\(Int(value / kib))KB"
+        }
+
+        return "\(self)B"
+    }
+
+    var statusRateString: String {
+        "\(statusBytesString)/s"
+    }
 }
 
 extension TimeInterval {

@@ -21,11 +21,11 @@ final class SystemMonitorStatusView: NSControl {
     }
 
     func update(snapshot: MetricSnapshot) {
-        downLabel.stringValue = "↓ \(snapshot.networkDownRate.compactRateString)"
-        upLabel.stringValue = "↑ \(snapshot.networkUpRate.compactRateString)"
+        downLabel.stringValue = "↓ \(snapshot.networkDownRate.statusRateString)"
+        upLabel.stringValue = "↑ \(snapshot.networkUpRate.statusRateString)"
         cpuValueLabel.stringValue = snapshot.cpuUsage.percentString
         ramValueLabel.stringValue = snapshot.memoryUsage.percentString
-        ssdValueLabel.stringValue = snapshot.diskAvailable.compactBytesString
+        ssdValueLabel.stringValue = snapshot.diskAvailable.statusBytesString
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -34,7 +34,7 @@ final class SystemMonitorStatusView: NSControl {
 
     private func setup() {
         wantsLayer = true
-        frame = NSRect(x: 0, y: 0, width: 270, height: NSStatusBar.system.thickness)
+        frame = NSRect(x: 0, y: 0, width: 246, height: NSStatusBar.system.thickness)
         toolTip = "System Monitor"
 
         iconView.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
@@ -55,13 +55,13 @@ final class SystemMonitorStatusView: NSControl {
         ])
         metricsStack.orientation = .horizontal
         metricsStack.alignment = .centerY
-        metricsStack.spacing = 12
+        metricsStack.spacing = 8
         metricsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let rootStack = NSStackView(views: [iconView, networkStack, metricsStack])
         rootStack.orientation = .horizontal
         rootStack.alignment = .centerY
-        rootStack.spacing = 9
+        rootStack.spacing = 8
         rootStack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(rootStack)
@@ -69,11 +69,12 @@ final class SystemMonitorStatusView: NSControl {
         [downLabel, upLabel, cpuValueLabel, ramValueLabel, ssdValueLabel].forEach(configureValueLabel)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 270),
+            widthAnchor.constraint(equalToConstant: 246),
             heightAnchor.constraint(equalToConstant: NSStatusBar.system.thickness),
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             rootStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            networkStack.widthAnchor.constraint(equalToConstant: 60),
             iconView.widthAnchor.constraint(equalToConstant: 18),
             iconView.heightAnchor.constraint(equalToConstant: 18)
         ])
@@ -85,22 +86,24 @@ final class SystemMonitorStatusView: NSControl {
 
         let stack = NSStackView(views: [titleLabel, valueLabel])
         stack.orientation = .vertical
-        stack.alignment = .centerX
+        stack.alignment = .leading
         stack.spacing = -1
+        stack.widthAnchor.constraint(equalToConstant: title == "SSD" ? 48 : 34).isActive = true
         return stack
     }
 
     private func configureTitleLabel(_ label: NSTextField) {
         label.font = .monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
         label.textColor = .labelColor
-        label.alignment = .center
+        label.alignment = .left
+        label.lineBreakMode = .byClipping
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     private func configureValueLabel(_ label: NSTextField) {
         label.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         label.textColor = .labelColor
-        label.alignment = .center
+        label.alignment = .left
         label.lineBreakMode = .byClipping
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
     }

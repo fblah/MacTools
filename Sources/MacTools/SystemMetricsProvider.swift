@@ -105,8 +105,10 @@ final class SystemMetricsProvider {
         }
 
         let pageSize = UInt64(getpagesize())
-        let free = UInt64(stats.free_count) * pageSize
-        let used = total > free ? total - free : 0
+        let appMemory = UInt64(stats.internal_page_count) * pageSize
+        let wired = UInt64(stats.wire_count) * pageSize
+        let compressed = UInt64(stats.compressor_page_count) * pageSize
+        let used = min(appMemory + wired + compressed, total)
 
         return (used: used, total: total)
     }

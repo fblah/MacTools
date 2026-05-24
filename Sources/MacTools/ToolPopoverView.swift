@@ -451,6 +451,7 @@ private struct MemoryCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -460,7 +461,7 @@ private struct DiskCard: View {
 
     var body: some View {
         MonitorCard(badge: "paintbrush.pointed") {
-            VStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(snapshot.diskUsage.percentString)
                     .font(.system(size: 26, weight: .bold, design: .rounded))
 
@@ -469,6 +470,7 @@ private struct DiskCard: View {
                     .controlSize(.large)
                     .frame(width: 132)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 10)
 
@@ -478,6 +480,7 @@ private struct DiskCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -499,6 +502,7 @@ private struct NetworkCard: View {
             Text("Network")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -560,7 +564,7 @@ private struct ArcGauge: View {
                 .font(.system(size: 26, weight: .bold, design: .rounded))
         }
         .frame(width: 120, height: 88)
-        .frame(maxWidth: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -580,6 +584,7 @@ private struct MetricTitle: View {
                 .minimumScaleFactor(0.75)
         }
         .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -599,6 +604,7 @@ private struct SecondaryLine: View {
                 .minimumScaleFactor(0.72)
         }
         .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -611,7 +617,7 @@ private struct NetworkStack: View {
             NetworkLine(icon: "arrow.down", value: downRate)
             NetworkLine(icon: "arrow.up", value: upRate)
         }
-        .frame(maxWidth: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
