@@ -262,17 +262,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             triangle.close()
             mark.append(triangle)
 
-            let dCutout = NSBezierPath()
-            dCutout.move(to: NSPoint(x: rect.minX + 6.0, y: rect.minY + 5.0))
-            dCutout.line(to: NSPoint(x: rect.minX + 6.0, y: rect.maxY - 5.0))
-            dCutout.line(to: NSPoint(x: rect.minX + 8.7, y: rect.maxY - 5.0))
-            dCutout.curve(
-                to: NSPoint(x: rect.minX + 8.7, y: rect.minY + 5.0),
-                controlPoint1: NSPoint(x: rect.maxX - 3.6, y: rect.maxY - 5.0),
-                controlPoint2: NSPoint(x: rect.maxX - 3.6, y: rect.minY + 5.0)
+            let outerD = NSBezierPath()
+            outerD.move(to: NSPoint(x: rect.minX + 6.4, y: rect.minY + 6.1))
+            outerD.line(to: NSPoint(x: rect.minX + 6.4, y: rect.maxY - 6.1))
+            outerD.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 6.1))
+            outerD.curve(
+                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 6.1),
+                controlPoint1: NSPoint(x: rect.maxX - 4.7, y: rect.maxY - 6.1),
+                controlPoint2: NSPoint(x: rect.maxX - 4.7, y: rect.minY + 6.1)
             )
-            dCutout.close()
-            mark.append(dCutout.reversed)
+            outerD.close()
+            mark.append(outerD)
+
+            let innerCounter = NSBezierPath()
+            innerCounter.move(to: NSPoint(x: rect.minX + 8.0, y: rect.minY + 7.35))
+            innerCounter.line(to: NSPoint(x: rect.minX + 8.0, y: rect.maxY - 7.35))
+            innerCounter.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 7.35))
+            innerCounter.curve(
+                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 7.35),
+                controlPoint1: NSPoint(x: rect.maxX - 6.15, y: rect.maxY - 7.35),
+                controlPoint2: NSPoint(x: rect.maxX - 6.15, y: rect.minY + 7.35)
+            )
+            innerCounter.close()
+            mark.append(innerCounter)
 
             mark.fill()
 
