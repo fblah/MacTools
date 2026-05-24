@@ -250,42 +250,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func toolboxStatusImage() -> NSImage {
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-            NSColor.labelColor.setStroke()
             NSColor.labelColor.setFill()
 
-            let body = NSBezierPath(
-                roundedRect: NSRect(x: rect.minX + 2.5, y: rect.minY + 4, width: 13, height: 10),
-                xRadius: 2.5,
-                yRadius: 2.5
-            )
-            body.lineWidth = 1.7
-            body.stroke()
+            let mark = NSBezierPath()
+            mark.windingRule = .evenOdd
 
-            let handle = NSBezierPath()
-            handle.lineWidth = 1.7
-            handle.lineCapStyle = .round
-            handle.move(to: NSPoint(x: rect.minX + 6.1, y: rect.minY + 13.2))
-            handle.curve(
-                to: NSPoint(x: rect.minX + 11.9, y: rect.minY + 13.2),
-                controlPoint1: NSPoint(x: rect.minX + 6.5, y: rect.minY + 16.1),
-                controlPoint2: NSPoint(x: rect.minX + 11.5, y: rect.minY + 16.1)
-            )
-            handle.stroke()
+            let triangle = NSBezierPath()
+            triangle.move(to: NSPoint(x: rect.midX, y: rect.maxY - 1.6))
+            triangle.line(to: NSPoint(x: rect.maxX - 1.4, y: rect.minY + 2.2))
+            triangle.line(to: NSPoint(x: rect.minX + 1.4, y: rect.minY + 2.2))
+            triangle.close()
+            mark.append(triangle)
 
-            let dMark = NSBezierPath()
-            dMark.lineWidth = 1.8
-            dMark.lineCapStyle = .round
-            dMark.lineJoinStyle = .round
-            dMark.move(to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 6.6))
-            dMark.line(to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 11.4))
-            dMark.curve(
-                to: NSPoint(x: rect.minX + 6.5, y: rect.minY + 6.6),
-                controlPoint1: NSPoint(x: rect.minX + 11.2, y: rect.minY + 11.6),
-                controlPoint2: NSPoint(x: rect.minX + 11.2, y: rect.minY + 6.4)
+            let dCutout = NSBezierPath()
+            dCutout.move(to: NSPoint(x: rect.minX + 6.0, y: rect.minY + 5.0))
+            dCutout.line(to: NSPoint(x: rect.minX + 6.0, y: rect.maxY - 5.0))
+            dCutout.line(to: NSPoint(x: rect.minX + 8.7, y: rect.maxY - 5.0))
+            dCutout.curve(
+                to: NSPoint(x: rect.minX + 8.7, y: rect.minY + 5.0),
+                controlPoint1: NSPoint(x: rect.maxX - 3.6, y: rect.maxY - 5.0),
+                controlPoint2: NSPoint(x: rect.maxX - 3.6, y: rect.minY + 5.0)
             )
-            dMark.stroke()
+            dCutout.close()
+            mark.append(dCutout.reversed)
 
-            NSBezierPath(ovalIn: NSRect(x: rect.minX + 12.2, y: rect.minY + 7.6, width: 2.1, height: 2.1)).fill()
+            mark.fill()
 
             return true
         }
