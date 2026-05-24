@@ -1,6 +1,8 @@
 import AppKit
 
 final class SystemMonitorStatusView: NSControl {
+    private static let statusWidth: CGFloat = 213
+
     private let iconView = NSImageView()
     private let downLabel = NSTextField(labelWithString: "--")
     private let upLabel = NSTextField(labelWithString: "--")
@@ -81,7 +83,7 @@ final class SystemMonitorStatusView: NSControl {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
-        frame = NSRect(x: 0, y: 0, width: 218, height: NSStatusBar.system.thickness)
+        frame = NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness)
         toolTip = "System Monitor"
 
         iconView.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
@@ -116,7 +118,7 @@ final class SystemMonitorStatusView: NSControl {
         [downLabel, upLabel, cpuValueLabel, ramValueLabel, ssdValueLabel].forEach(configureValueLabel)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 218),
+            widthAnchor.constraint(equalToConstant: Self.statusWidth),
             heightAnchor.constraint(equalToConstant: NSStatusBar.system.thickness),
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
             rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
