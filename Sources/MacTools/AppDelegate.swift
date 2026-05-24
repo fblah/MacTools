@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var toolboxStatusItem: NSStatusItem?
     private var systemMonitorStatusItem: NSStatusItem?
+    private var systemMonitorStatusView: SystemMonitorStatusView?
     private var snapshotSink: AnyCancellable?
     private var defaultsSink: AnyCancellable?
     private var eventMonitor: Any?
@@ -111,10 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             closeSystemMonitorPopover()
 
-            if let systemMonitorStatusItem {
-                NSStatusBar.system.removeStatusItem(systemMonitorStatusItem)
-                self.systemMonitorStatusItem = nil
-            }
+        if let systemMonitorStatusItem {
+            NSStatusBar.system.removeStatusItem(systemMonitorStatusItem)
+            self.systemMonitorStatusItem = nil
+            self.systemMonitorStatusView = nil
+        }
         }
     }
 
@@ -124,23 +126,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: 270)
         systemMonitorStatusItem = item
 
-        guard let button = item.button else {
-            return
+        let statusView = SystemMonitorStatusView()
+        statusView.onClick = { [weak self] in
+            self?.toggleSystemMonitorPopover()
         }
-
-        button.target = self
-        button.action = #selector(toggleSystemMonitorPopover(_:))
-        button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
-        button.imagePosition = .imageLeading
-        button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        item.view = statusView
+        systemMonitorStatusView = statusView
         updateSystemMonitorStatusTitle(monitor.snapshot)
     }
 
     private func updateSystemMonitorStatusTitle(_ snapshot: MetricSnapshot) {
-        systemMonitorStatusItem?.button?.attributedTitle = Self.statusTitle(snapshot.menuBarTitle)
+        systemMonitorStatusView?.update(snapshot: snapshot)
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -151,11 +150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleSystemMonitorPopover(_ sender: NSStatusBarButton) {
+    private func toggleSystemMonitorPopover() {
         if systemMonitorPopover.isShown {
             closeSystemMonitorPopover()
         } else {
-            showSystemMonitorPopover(from: sender)
+            showSystemMonitorPopover()
         }
     }
 
@@ -171,9 +170,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopOutsideClickMonitorIfIdle()
     }
 
-    private func showSystemMonitorPopover(from button: NSStatusBarButton) {
+    private func showSystemMonitorPopover() {
+        guard let statusView = systemMonitorStatusView else {
+            return
+        }
+
         closeToolboxPopover()
-        systemMonitorPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        systemMonitorPopover.show(relativeTo: statusView.bounds, of: statusView, preferredEdge: .minY)
         systemMonitorPopover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitor()
     }
@@ -191,9 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncSystemMonitorStatusItem()
         closeToolboxPopover()
 
-        if let button = systemMonitorStatusItem?.button {
-            showSystemMonitorPopover(from: button)
-        }
+        showSystemMonitorPopover()
     }
 
     private func showToolboxFromSystemMonitor() {
@@ -236,18 +237,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSSize(width: width, height: height)
     }
 
-    private static func statusTitle(_ title: String) -> NSAttributedString {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
-        paragraphStyle.lineSpacing = -2
-
-        return NSAttributedString(
-            string: title,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraphStyle
-            ]
-        )
-    }
 }

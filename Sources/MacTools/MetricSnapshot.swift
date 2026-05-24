@@ -33,12 +33,6 @@ struct MetricSnapshot: Equatable {
         diskTotal > diskUsed ? diskTotal - diskUsed : 0
     }
 
-    var menuBarTitle: String {
-        let labels = "↓ \(networkDownRate.compactRateString)   CPU   RAM   SSD"
-        let values = "↑ \(networkUpRate.compactRateString)   \(cpuUsage.percentString)   \(memoryUsage.percentString)   \(diskAvailable.compactBytesString)"
-        return "\(labels)\n\(values)"
-    }
-
     static let placeholder = MetricSnapshot(
         timestamp: Date(),
         cpuUsage: 0,
