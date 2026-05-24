@@ -271,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             triangle.close()
             mark.append(triangle)
 
-            let dYOffset: CGFloat = -1.0
+            let dYOffset: CGFloat = -3.0
             let outerD = NSBezierPath()
             outerD.move(to: NSPoint(x: rect.minX + 6.4, y: rect.minY + 6.1 + dYOffset))
             outerD.line(to: NSPoint(x: rect.minX + 6.4, y: rect.maxY - 6.1 + dYOffset))

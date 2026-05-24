@@ -1,7 +1,7 @@
 import AppKit
 
 final class SystemMonitorStatusView: NSControl {
-    static let statusWidth: CGFloat = 213
+    static let statusWidth: CGFloat = 203
 
     private let iconView = NSImageView()
     private let downLabel = NSTextField(labelWithString: "--")
@@ -107,13 +107,13 @@ final class SystemMonitorStatusView: NSControl {
         ])
         metricsStack.orientation = .horizontal
         metricsStack.alignment = .centerY
-        metricsStack.spacing = 3
+        metricsStack.spacing = -1
         metricsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let rootStack = NSStackView(views: [iconView, networkStack, metricsStack])
         rootStack.orientation = .horizontal
         rootStack.alignment = .centerY
-        rootStack.spacing = 3
+        rootStack.spacing = -1
         rootStack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(rootStack)
