@@ -69,10 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemMonitorPopover.animates = true
         systemMonitorPopover.contentViewController = NSHostingController(
             rootView: SystemMonitorPopoverView(
-                monitor: monitor,
-                onSettings: { [weak self] in
-                    self?.showToolboxFromSystemMonitor()
-                }
+                monitor: monitor
             )
         )
     }
@@ -210,14 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeToolboxPopover()
 
         showSystemMonitorPopover()
-    }
-
-    private func showToolboxFromSystemMonitor() {
-        closeSystemMonitorPopover()
-
-        if let button = toolboxStatusItem?.button {
-            showToolboxPopover(from: button)
-        }
     }
 
     private func startOutsideClickMonitor() {

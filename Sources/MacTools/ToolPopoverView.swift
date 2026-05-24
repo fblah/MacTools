@@ -367,7 +367,7 @@ private struct EmptyToolsView: View {
 
 struct SystemMonitorPopoverView: View {
     @ObservedObject var monitor: SystemMonitor
-    var onSettings: () -> Void
+    @State private var isShowingSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -378,8 +378,8 @@ struct SystemMonitorPopoverView: View {
 
                 Spacer()
 
-                Button(action: onSettings) {
-                        Image(systemName: "gearshape.fill")
+                Button(action: { isShowingSettings = true }) {
+                    Image(systemName: "gearshape.fill")
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.secondary)
                         .frame(width: 28, height: 28)
@@ -411,6 +411,9 @@ struct SystemMonitorPopoverView: View {
                 endPoint: .bottom
             )
         )
+        .sheet(isPresented: $isShowingSettings) {
+            SystemMonitorSettingsView()
+        }
     }
 
     private var columns: [GridItem] {
@@ -683,5 +686,44 @@ private struct SettingsView: View {
         }
         .padding(22)
         .frame(width: 360, height: 220)
+    }
+}
+
+private struct SystemMonitorSettingsView: View {
+    @AppStorage(DefaultsKey.systemMonitorEnabled) private var isEnabled = true
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("System Monitor Settings")
+                    .font(.system(size: 18, weight: .bold))
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Toggle("Show System Monitor in menu bar", isOn: $isEnabled)
+                .toggleStyle(.switch)
+
+            Divider()
+
+            Text("This tool owns its tray item, monitor popup, and settings. Disable it here or from the Toolbox Library.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+        }
+        .padding(20)
+        .frame(width: 320, height: 190)
     }
 }
