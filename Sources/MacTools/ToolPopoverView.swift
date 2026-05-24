@@ -8,12 +8,12 @@ enum DefaultsKey {
 struct ToolPopoverView: View {
     @ObservedObject var monitor: SystemMonitor
     var popoverSize: NSSize
+    var onOpenSystemMonitor: () -> Void
     var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(DefaultsKey.systemMonitorEnabled) private var isSystemMonitorEnabled = true
     @State private var selectedSection = ToolboxSection.dashboard
-    @State private var activeTool: ToolboxTool?
     @State private var searchText = ""
     @State private var isShowingSettings = false
 
@@ -27,17 +27,13 @@ struct ToolPopoverView: View {
 
             Divider()
 
-            if let activeTool {
-                toolDetail(activeTool)
-            } else {
-                ToolboxDashboard(
-                    selectedSection: selectedSection,
-                    searchText: searchText,
-                    snapshot: monitor.snapshot,
-                    isSystemMonitorEnabled: $isSystemMonitorEnabled,
-                    onOpenTool: { activeTool = $0 }
-                )
-            }
+            ToolboxDashboard(
+                selectedSection: selectedSection,
+                searchText: searchText,
+                snapshot: monitor.snapshot,
+                isSystemMonitorEnabled: $isSystemMonitorEnabled,
+                onOpenTool: onOpenSystemMonitor
+            )
         }
         .frame(width: popoverSize.width, height: popoverSize.height)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
@@ -46,17 +42,6 @@ struct ToolPopoverView: View {
         }
     }
 
-    @ViewBuilder
-    private func toolDetail(_ tool: ToolboxTool) -> some View {
-        switch tool {
-        case .systemMonitor:
-            SystemMonitorDetail(
-                snapshot: monitor.snapshot,
-                onBack: { activeTool = nil },
-                onSettings: { isShowingSettings = true }
-            )
-        }
-    }
 }
 
 private enum ToolboxSection: String, CaseIterable {
@@ -140,7 +125,7 @@ private struct ToolboxDashboard: View {
     var searchText: String
     var snapshot: MetricSnapshot
     @Binding var isSystemMonitorEnabled: Bool
-    var onOpenTool: (ToolboxTool) -> Void
+    var onOpenTool: () -> Void
 
     var body: some View {
         ScrollView {
@@ -167,7 +152,7 @@ private struct DashboardView: View {
     var searchText: String
     var isSystemMonitorEnabled: Bool
     var snapshot: MetricSnapshot
-    var onOpenTool: (ToolboxTool) -> Void
+    var onOpenTool: () -> Void
 
     private var visibleTools: [ToolboxTool] {
         guard isSystemMonitorEnabled else {
@@ -181,6 +166,10 @@ private struct DashboardView: View {
         VStack(alignment: .leading, spacing: 28) {
             Text("D'Monte's Toolbox")
                 .font(.system(size: 28, weight: .bold))
+
+            Text("Enable tools in Library. Each enabled tool gets its own menu bar item.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
 
             if visibleTools.isEmpty {
                 EmptyToolsView()
@@ -211,7 +200,7 @@ private struct LibraryView: View {
     var searchText: String
     @Binding var isSystemMonitorEnabled: Bool
     var snapshot: MetricSnapshot
-    var onOpenTool: (ToolboxTool) -> Void
+    var onOpenTool: () -> Void
 
     private var tools: [ToolboxTool] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,13 +245,13 @@ private struct LibraryView: View {
 private struct ToolGrid: View {
     var tools: [ToolboxTool]
     var snapshot: MetricSnapshot
-    var onOpenTool: (ToolboxTool) -> Void
+    var onOpenTool: () -> Void
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 30) {
             ForEach(tools) { tool in
                 ToolboxIcon(tool: tool, snapshot: snapshot) {
-                    onOpenTool(tool)
+                    onOpenTool()
                 }
             }
         }
@@ -316,7 +305,7 @@ private struct LibraryToolRow: View {
     var tool: ToolboxTool
     var snapshot: MetricSnapshot
     @Binding var isEnabled: Bool
-    var onOpenTool: (ToolboxTool) -> Void
+    var onOpenTool: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
@@ -340,7 +329,7 @@ private struct LibraryToolRow: View {
             Spacer()
 
             Button {
-                onOpenTool(tool)
+                onOpenTool()
             } label: {
                 Image(systemName: "arrow.up.forward")
                     .font(.system(size: 14, weight: .bold))
@@ -376,22 +365,13 @@ private struct EmptyToolsView: View {
     }
 }
 
-private struct SystemMonitorDetail: View {
-    var snapshot: MetricSnapshot
-    var onBack: () -> Void
+struct SystemMonitorPopoverView: View {
+    @ObservedObject var monitor: SystemMonitor
     var onSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.plain)
-                .help("Back")
-
                 Text("System Monitor")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -411,10 +391,10 @@ private struct SystemMonitorDetail: View {
             .padding(.vertical, 16)
 
             LazyVGrid(columns: columns, spacing: 12) {
-                LoadCard(snapshot: snapshot)
-                MemoryCard(snapshot: snapshot)
-                DiskCard(snapshot: snapshot)
-                NetworkCard(snapshot: snapshot)
+                LoadCard(snapshot: monitor.snapshot)
+                MemoryCard(snapshot: monitor.snapshot)
+                DiskCard(snapshot: monitor.snapshot)
+                NetworkCard(snapshot: monitor.snapshot)
             }
             .padding(.horizontal, 22)
             .padding(.bottom, 22)

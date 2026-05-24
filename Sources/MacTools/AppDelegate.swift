@@ -6,14 +6,17 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = SystemMonitor()
-    private let popover = NSPopover()
+    private let toolboxPopover = NSPopover()
+    private let systemMonitorPopover = NSPopover()
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
         userDriverDelegate: nil
     )
-    private var statusItem: NSStatusItem?
+    private var toolboxStatusItem: NSStatusItem?
+    private var systemMonitorStatusItem: NSStatusItem?
     private var snapshotSink: AnyCancellable?
+    private var defaultsSink: AnyCancellable?
     private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,8 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DefaultsKey.systemMonitorEnabled: true
         ])
 
-        configurePopover()
-        configureStatusItem()
+        configureToolboxPopover()
+        configureSystemMonitorPopover()
+        configureToolboxStatusItem()
+        syncSystemMonitorStatusItem()
         monitor.start()
     }
 
@@ -34,11 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func configurePopover() {
+    private func configureToolboxPopover() {
         let popoverSize = Self.preferredPopoverSize()
         let rootView = ToolPopoverView(
             monitor: monitor,
             popoverSize: popoverSize,
+            onOpenSystemMonitor: { [weak self] in
+                self?.openSystemMonitorFromToolbox()
+            },
             onCheckForUpdates: { [weak self] in
                 self?.updaterController.checkForUpdates(nil)
             },
@@ -47,15 +55,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        popover.contentSize = popoverSize
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: rootView)
+        toolboxPopover.contentSize = popoverSize
+        toolboxPopover.behavior = .transient
+        toolboxPopover.animates = true
+        toolboxPopover.contentViewController = NSHostingController(rootView: rootView)
     }
 
-    private func configureStatusItem() {
+    private func configureSystemMonitorPopover() {
+        systemMonitorPopover.contentSize = NSSize(width: 520, height: 430)
+        systemMonitorPopover.behavior = .transient
+        systemMonitorPopover.animates = true
+        systemMonitorPopover.contentViewController = NSHostingController(
+            rootView: SystemMonitorPopoverView(
+                monitor: monitor,
+                onSettings: { [weak self] in
+                    self?.showToolboxFromSystemMonitor()
+                }
+            )
+        )
+    }
+
+    private func configureToolboxStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem = item
+        toolboxStatusItem = item
 
         guard let button = item.button else {
             return
@@ -65,40 +87,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(togglePopover(_:))
         button.image = NSImage(systemSymbolName: "switch.2", accessibilityDescription: "D'Monte's Toolbox")
         button.imagePosition = .imageLeading
-        button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-        button.attributedTitle = Self.statusTitle("  starting...\n")
+        button.font = .systemFont(ofSize: 12, weight: .semibold)
+        button.title = " Toolbox"
 
         snapshotSink = monitor.$snapshot
             .receive(on: RunLoop.main)
-            .sink { [weak button] snapshot in
-                if UserDefaults.standard.bool(forKey: DefaultsKey.systemMonitorEnabled) {
-                    button?.attributedTitle = Self.statusTitle(snapshot.menuBarTitle)
-                } else {
-                    button?.attributedTitle = Self.statusTitle("D'Monte's\nToolbox")
-                }
+            .sink { [weak self] snapshot in
+                self?.updateSystemMonitorStatusTitle(snapshot)
+            }
+
+        defaultsSink = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.syncSystemMonitorStatusItem()
             }
     }
 
-    @objc private func togglePopover(_ sender: NSStatusBarButton) {
-        if popover.isShown {
-            closePopover()
+    private func syncSystemMonitorStatusItem() {
+        let isEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.systemMonitorEnabled)
+
+        if isEnabled {
+            configureSystemMonitorStatusItemIfNeeded()
         } else {
-            showPopover(from: sender)
+            closeSystemMonitorPopover()
+
+            if let systemMonitorStatusItem {
+                NSStatusBar.system.removeStatusItem(systemMonitorStatusItem)
+                self.systemMonitorStatusItem = nil
+            }
         }
     }
 
-    private func showPopover(from button: NSStatusBarButton) {
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+    private func configureSystemMonitorStatusItemIfNeeded() {
+        guard systemMonitorStatusItem == nil else {
+            updateSystemMonitorStatusTitle(monitor.snapshot)
+            return
+        }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        systemMonitorStatusItem = item
+
+        guard let button = item.button else {
+            return
+        }
+
+        button.target = self
+        button.action = #selector(toggleSystemMonitorPopover(_:))
+        button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
+        button.imagePosition = .imageLeading
+        button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        updateSystemMonitorStatusTitle(monitor.snapshot)
+    }
+
+    private func updateSystemMonitorStatusTitle(_ snapshot: MetricSnapshot) {
+        systemMonitorStatusItem?.button?.attributedTitle = Self.statusTitle(snapshot.menuBarTitle)
+    }
+
+    @objc private func togglePopover(_ sender: NSStatusBarButton) {
+        if toolboxPopover.isShown {
+            closeToolboxPopover()
+        } else {
+            showToolboxPopover(from: sender)
+        }
+    }
+
+    @objc private func toggleSystemMonitorPopover(_ sender: NSStatusBarButton) {
+        if systemMonitorPopover.isShown {
+            closeSystemMonitorPopover()
+        } else {
+            showSystemMonitorPopover(from: sender)
+        }
+    }
+
+    private func showToolboxPopover(from button: NSStatusBarButton) {
+        closeSystemMonitorPopover()
+        toolboxPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        toolboxPopover.contentViewController?.view.window?.makeKey()
         startOutsideClickMonitor()
     }
 
-    private func closePopover() {
-        popover.performClose(nil)
+    private func closeToolboxPopover() {
+        toolboxPopover.performClose(nil)
+        stopOutsideClickMonitorIfIdle()
+    }
 
-        if let eventMonitor {
-            NSEvent.removeMonitor(eventMonitor)
-            self.eventMonitor = nil
+    private func showSystemMonitorPopover(from button: NSStatusBarButton) {
+        closeToolboxPopover()
+        systemMonitorPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        systemMonitorPopover.contentViewController?.view.window?.makeKey()
+        startOutsideClickMonitor()
+    }
+
+    private func closeSystemMonitorPopover() {
+        systemMonitorPopover.performClose(nil)
+        stopOutsideClickMonitorIfIdle()
+    }
+
+    private func openSystemMonitorFromToolbox() {
+        guard UserDefaults.standard.bool(forKey: DefaultsKey.systemMonitorEnabled) else {
+            return
+        }
+
+        syncSystemMonitorStatusItem()
+        closeToolboxPopover()
+
+        if let button = systemMonitorStatusItem?.button {
+            showSystemMonitorPopover(from: button)
+        }
+    }
+
+    private func showToolboxFromSystemMonitor() {
+        closeSystemMonitorPopover()
+
+        if let button = toolboxStatusItem?.button {
+            showToolboxPopover(from: button)
         }
     }
 
@@ -108,8 +210,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.closePopover()
+            self?.closeToolboxPopover()
+            self?.closeSystemMonitorPopover()
         }
+    }
+
+    private func stopOutsideClickMonitorIfIdle() {
+        guard !toolboxPopover.isShown, !systemMonitorPopover.isShown, let eventMonitor else {
+            return
+        }
+
+        NSEvent.removeMonitor(eventMonitor)
+        self.eventMonitor = nil
     }
 
     private func quit() {

@@ -2,12 +2,15 @@
 
 D'Monte's Toolbox is a native macOS menu bar toolbox inspired by the convenience of Parallels Toolbox, built as a lightweight Swift app.
 
-The first real tool is **System Monitor**. It can be enabled or disabled from the Library, shows live metrics in the menu bar when enabled, and opens into a compact monitor panel with CPU, memory, disk, network, and uptime metrics.
+The toolbox itself is the manager app. Tools are enabled or disabled from the Library, and each enabled tool can own its own menu bar item.
+
+The first real tool is **System Monitor**. When enabled, it adds a separate live menu bar monitor strip. Clicking that strip opens the System Monitor panel with CPU, memory, disk, network, and uptime metrics.
 
 ## Goals
 
 - Native macOS menu bar experience
 - A toolbox dashboard with enable/disable controls per tool
+- Separate menu bar items for enabled tools
 - Small, fast, and easy to extend
 - Clean SwiftUI tool views hosted from AppKit
 - Public MIT-licensed repository
