@@ -135,9 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemMonitorStatusItem = item
 
         let statusView = SystemMonitorStatusView()
-        statusView.onClick = { [weak self] in
-            self?.toggleSystemMonitorPopover()
-        }
+        statusView.target = self
+        statusView.action = #selector(toggleSystemMonitorPopover(_:))
         item.view = statusView
         systemMonitorStatusView = statusView
         updateSystemMonitorStatusTitle(monitor.snapshot)
@@ -165,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func toggleSystemMonitorPopover() {
+    @objc private func toggleSystemMonitorPopover(_ sender: Any?) {
         if systemMonitorPopover.isShown {
             closeSystemMonitorPopover()
         } else {

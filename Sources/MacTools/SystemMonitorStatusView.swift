@@ -9,8 +9,6 @@ final class SystemMonitorStatusView: NSControl {
     private let ssdValueLabel = NSTextField(labelWithString: "--")
     private var trackingArea: NSTrackingArea?
 
-    var onClick: (() -> Void)?
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
@@ -30,7 +28,21 @@ final class SystemMonitorStatusView: NSControl {
     }
 
     override func mouseDown(with event: NSEvent) {
-        onClick?()
+        isHighlighted = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isHighlighted = false
+
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
+            return
+        }
+
+        guard let action else {
+            return
+        }
+
+        NSApp.sendAction(action, to: target, from: self)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -58,7 +70,7 @@ final class SystemMonitorStatusView: NSControl {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.13).cgColor
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -67,7 +79,7 @@ final class SystemMonitorStatusView: NSControl {
 
     private func setup() {
         wantsLayer = true
-        layer?.cornerRadius = 14
+        layer?.cornerRadius = 8
         layer?.masksToBounds = true
         frame = NSRect(x: 0, y: 0, width: 218, height: NSStatusBar.system.thickness)
         toolTip = "System Monitor"
