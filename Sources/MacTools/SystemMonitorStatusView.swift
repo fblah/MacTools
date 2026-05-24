@@ -1,7 +1,7 @@
 import AppKit
 
 final class SystemMonitorStatusView: NSControl {
-    private static let statusWidth: CGFloat = 213
+    static let statusWidth: CGFloat = 213
 
     private let iconView = NSImageView()
     private let downLabel = NSTextField(labelWithString: "--")
@@ -31,11 +31,14 @@ final class SystemMonitorStatusView: NSControl {
 
     override func mouseDown(with event: NSEvent) {
         isHighlighted = true
+        sendClickAction(for: event)
     }
 
     override func mouseUp(with event: NSEvent) {
         isHighlighted = false
+    }
 
+    private func sendClickAction(for event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
             return
         }
@@ -104,13 +107,13 @@ final class SystemMonitorStatusView: NSControl {
         ])
         metricsStack.orientation = .horizontal
         metricsStack.alignment = .centerY
-        metricsStack.spacing = 5
+        metricsStack.spacing = 3
         metricsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let rootStack = NSStackView(views: [iconView, networkStack, metricsStack])
         rootStack.orientation = .horizontal
         rootStack.alignment = .centerY
-        rootStack.spacing = 6
+        rootStack.spacing = 3
         rootStack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(rootStack)
@@ -123,7 +126,7 @@ final class SystemMonitorStatusView: NSControl {
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
             rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
             rootStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            networkStack.widthAnchor.constraint(equalToConstant: 54),
+            networkStack.widthAnchor.constraint(equalToConstant: 51),
             iconView.widthAnchor.constraint(equalToConstant: 17),
             iconView.heightAnchor.constraint(equalToConstant: 17)
         ])

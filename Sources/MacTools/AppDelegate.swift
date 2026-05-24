@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: 218)
+        let item = NSStatusBar.system.statusItem(withLength: SystemMonitorStatusView.statusWidth)
         systemMonitorStatusItem = item
 
         let statusView = SystemMonitorStatusView()
@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeSystemMonitorPopover()
         toolboxPopover.show(relativeTo: Self.popoverAnchorRect(for: button.bounds), of: button, preferredEdge: .minY)
         toolboxPopover.contentViewController?.view.window?.makeKey()
-        startOutsideClickMonitor()
+        startOutsideClickMonitorAfterOpeningClick()
     }
 
     private func closeToolboxPopover() {
@@ -192,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeToolboxPopover()
         systemMonitorPopover.show(relativeTo: Self.popoverAnchorRect(for: statusView.bounds), of: statusView, preferredEdge: .minY)
         systemMonitorPopover.contentViewController?.view.window?.makeKey()
-        startOutsideClickMonitor()
+        startOutsideClickMonitorAfterOpeningClick()
     }
 
     private func closeSystemMonitorPopover() {
@@ -212,6 +212,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startOutsideClickMonitor() {
+        guard toolboxPopover.isShown || systemMonitorPopover.isShown else {
+            return
+        }
+
         if eventMonitor != nil {
             return
         }
@@ -219,6 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.closeToolboxPopover()
             self?.closeSystemMonitorPopover()
+        }
+    }
+
+    private func startOutsideClickMonitorAfterOpeningClick() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.startOutsideClickMonitor()
         }
     }
 
@@ -275,13 +285,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mark.append(outerD)
 
             let innerCounter = NSBezierPath()
-            innerCounter.move(to: NSPoint(x: rect.minX + 8.0, y: rect.minY + 7.35 + dYOffset))
-            innerCounter.line(to: NSPoint(x: rect.minX + 8.0, y: rect.maxY - 7.35 + dYOffset))
-            innerCounter.line(to: NSPoint(x: rect.minX + 8.8, y: rect.maxY - 7.35 + dYOffset))
+            innerCounter.move(to: NSPoint(x: rect.minX + 7.7, y: rect.minY + 7.0 + dYOffset))
+            innerCounter.line(to: NSPoint(x: rect.minX + 7.7, y: rect.maxY - 7.0 + dYOffset))
+            innerCounter.line(to: NSPoint(x: rect.minX + 8.75, y: rect.maxY - 7.0 + dYOffset))
             innerCounter.curve(
-                to: NSPoint(x: rect.minX + 8.8, y: rect.minY + 7.35 + dYOffset),
-                controlPoint1: NSPoint(x: rect.maxX - 6.15, y: rect.maxY - 7.35 + dYOffset),
-                controlPoint2: NSPoint(x: rect.maxX - 6.15, y: rect.minY + 7.35 + dYOffset)
+                to: NSPoint(x: rect.minX + 8.75, y: rect.minY + 7.0 + dYOffset),
+                controlPoint1: NSPoint(x: rect.maxX - 5.75, y: rect.maxY - 7.0 + dYOffset),
+                controlPoint2: NSPoint(x: rect.maxX - 5.75, y: rect.minY + 7.0 + dYOffset)
             )
             innerCounter.close()
             mark.append(innerCounter)
