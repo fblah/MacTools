@@ -105,11 +105,10 @@ final class SystemMetricsProvider {
         }
 
         let pageSize = UInt64(getpagesize())
-        let active = UInt64(stats.active_count) * pageSize
-        let wired = UInt64(stats.wire_count) * pageSize
-        let compressed = UInt64(stats.compressor_page_count) * pageSize
+        let free = UInt64(stats.free_count) * pageSize
+        let used = total > free ? total - free : 0
 
-        return (used: active + wired + compressed, total: total)
+        return (used: used, total: total)
     }
 
     private func diskUsage() -> (used: UInt64, total: UInt64) {

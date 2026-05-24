@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum DefaultsKey {
@@ -6,6 +7,7 @@ enum DefaultsKey {
 
 struct ToolPopoverView: View {
     @ObservedObject var monitor: SystemMonitor
+    var popoverSize: NSSize
     var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
@@ -37,7 +39,7 @@ struct ToolPopoverView: View {
                 )
             }
         }
-        .frame(width: 760, height: 620)
+        .frame(width: popoverSize.width, height: popoverSize.height)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.96))
         .sheet(isPresented: $isShowingSettings) {
             SettingsView(onCheckForUpdates: onCheckForUpdates, onQuit: onQuit)
@@ -505,12 +507,11 @@ private struct NetworkCard: View {
 
     var body: some View {
         MonitorCard(badge: "arrow.up.arrow.down") {
-            VStack(alignment: .leading, spacing: 14) {
-                NetworkRow(icon: "arrow.up", value: snapshot.networkUpRate.compactRateString)
-                NetworkRow(icon: "arrow.down", value: snapshot.networkDownRate.compactRateString)
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 18)
+            NetworkStack(
+                downRate: snapshot.networkDownRate.compactRateString,
+                upRate: snapshot.networkUpRate.compactRateString
+            )
+            .padding(.top, 14)
 
             Spacer(minLength: 10)
 
@@ -621,24 +622,38 @@ private struct SecondaryLine: View {
     }
 }
 
-private struct NetworkRow: View {
+private struct NetworkStack: View {
+    var downRate: String
+    var upRate: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NetworkLine(icon: "arrow.down", value: downRate)
+            NetworkLine(icon: "arrow.up", value: upRate)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+private struct NetworkLine: View {
     var icon: String
     var value: String
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.secondary.opacity(0.65))
-                .frame(width: 28, height: 28)
+                .frame(width: 26, height: 26)
                 .background(Color.secondary.opacity(0.18))
                 .clipShape(Circle())
 
             Text(value)
-                .font(.system(size: 23, weight: .bold, design: .rounded))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
         }
+        .frame(width: 150, alignment: .leading)
     }
 }
 

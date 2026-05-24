@@ -34,7 +34,9 @@ struct MetricSnapshot: Equatable {
     }
 
     var menuBarTitle: String {
-        "  \(networkDownRate.compactRateString)  \(networkUpRate.compactRateString)   CPU \(cpuUsage.percentString)   RAM \(memoryUsage.percentString)   SSD \(diskAvailable.compactBytesString)"
+        let labels = "↓ \(networkDownRate.compactRateString)   CPU   RAM   SSD"
+        let values = "↑ \(networkUpRate.compactRateString)   \(cpuUsage.percentString)   \(memoryUsage.percentString)   \(diskAvailable.compactBytesString)"
+        return "\(labels)\n\(values)"
     }
 
     static let placeholder = MetricSnapshot(

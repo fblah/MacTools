@@ -35,8 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
+        let popoverSize = Self.preferredPopoverSize()
         let rootView = ToolPopoverView(
             monitor: monitor,
+            popoverSize: popoverSize,
             onCheckForUpdates: { [weak self] in
                 self?.updaterController.checkForUpdates(nil)
             },
@@ -45,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        popover.contentSize = NSSize(width: 760, height: 620)
+        popover.contentSize = popoverSize
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = NSHostingController(rootView: rootView)
@@ -63,16 +65,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(togglePopover(_:))
         button.image = NSImage(systemSymbolName: "switch.2", accessibilityDescription: "D'Monte's Toolbox")
         button.imagePosition = .imageLeading
-        button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        button.title = "  starting..."
+        button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        button.attributedTitle = Self.statusTitle("  starting...\n")
 
         snapshotSink = monitor.$snapshot
             .receive(on: RunLoop.main)
             .sink { [weak button] snapshot in
                 if UserDefaults.standard.bool(forKey: DefaultsKey.systemMonitorEnabled) {
-                    button?.title = snapshot.menuBarTitle
+                    button?.attributedTitle = Self.statusTitle(snapshot.menuBarTitle)
                 } else {
-                    button?.title = "  D'Monte's Toolbox"
+                    button?.attributedTitle = Self.statusTitle("D'Monte's\nToolbox")
                 }
             }
     }
@@ -112,5 +114,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private static func preferredPopoverSize() -> NSSize {
+        let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let width = min(760, max(600, visibleFrame.width * 0.52))
+        let height = min(620, max(500, visibleFrame.height - 120))
+
+        return NSSize(width: width, height: height)
+    }
+
+    private static func statusTitle(_ title: String) -> NSAttributedString {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        paragraphStyle.lineSpacing = -2
+
+        return NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
     }
 }
