@@ -17,7 +17,7 @@ DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/$TAG_NAME/$ZIP_NA
 
 rm -f "$ZIP_PATH" "$APPCAST_PATH"
 cd "$ROOT_DIR/dist"
-ditto -c -k --sequesterRsrc --keepParent "D'Monte's Toolbox.app" "$ZIP_NAME"
+ditto -c -k --sequesterRsrc --keepParent "DMonte Toolbox.app" "$ZIP_NAME"
 
 if [[ -n "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   signature_output="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_SIGN_UPDATE" --ed-key-file - "$ZIP_PATH")"

@@ -1,7 +1,7 @@
 import AppKit
 
 let app = NSApplication.shared
-let delegate = AppDelegate()
+let delegate = SystemMonitorAppDelegate()
 
 app.delegate = delegate
 app.setActivationPolicy(.accessory)

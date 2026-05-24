@@ -2,13 +2,17 @@ import Combine
 import Foundation
 
 @MainActor
-final class SystemMonitor: ObservableObject {
-    @Published private(set) var snapshot = MetricSnapshot.placeholder
+public final class SystemMonitor: ObservableObject {
+    @Published public private(set) var snapshot = MetricSnapshot.placeholder
 
     private let provider = SystemMetricsProvider()
     private var timer: Timer?
 
-    func start() {
+    public init(snapshot: MetricSnapshot = .placeholder) {
+        self.snapshot = snapshot
+    }
+
+    public func start() {
         refresh()
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -18,12 +22,12 @@ final class SystemMonitor: ObservableObject {
         }
     }
 
-    func stop() {
+    public func stop() {
         timer?.invalidate()
         timer = nil
     }
 
-    func refresh() {
+    public func refresh() {
         snapshot = provider.sample()
     }
 }

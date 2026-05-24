@@ -1,8 +1,12 @@
 import AppKit
 
-final class SystemMonitorStatusView: NSControl {
-    static let statusWidth: CGFloat = 203
+public final class SystemMonitorStatusView: NSControl {
+    public static let statusWidth: CGFloat = 165
+    private static let highlightRightInset: CGFloat = 0
 
+    public var onClick: (() -> Void)?
+
+    private let highlightLayer = CALayer()
     private let iconView = NSImageView()
     private let downLabel = NSTextField(labelWithString: "--")
     private let upLabel = NSTextField(labelWithString: "--")
@@ -11,17 +15,17 @@ final class SystemMonitorStatusView: NSControl {
     private let ssdValueLabel = NSTextField(labelWithString: "--")
     private var trackingArea: NSTrackingArea?
 
-    override init(frame frameRect: NSRect) {
+    public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setup()
     }
 
-    required init?(coder: NSCoder) {
+    public required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
     }
 
-    func update(snapshot: MetricSnapshot) {
+    public func update(snapshot: MetricSnapshot) {
         downLabel.stringValue = "↓ \(snapshot.networkDownRate.statusRateString)"
         upLabel.stringValue = "↑ \(snapshot.networkUpRate.statusRateString)"
         cpuValueLabel.stringValue = snapshot.cpuUsage.percentString
@@ -29,36 +33,30 @@ final class SystemMonitorStatusView: NSControl {
         ssdValueLabel.stringValue = snapshot.diskAvailable.statusBytesString
     }
 
-    override func mouseDown(with event: NSEvent) {
+    public override func mouseDown(with event: NSEvent) {
         isHighlighted = true
-        sendClickAction(for: event)
+        onClick?()
     }
 
-    override func mouseUp(with event: NSEvent) {
+    public override func mouseUp(with event: NSEvent) {
         isHighlighted = false
     }
 
-    private func sendClickAction(for event: NSEvent) {
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else {
-            return
-        }
-
-        guard let action else {
-            return
-        }
-
-        NSApp.sendAction(action, to: target, from: self)
+    public override func layout() {
+        super.layout()
+        let highlightWidth = max(0, bounds.width - Self.highlightRightInset)
+        highlightLayer.frame = NSRect(x: 0, y: 0, width: highlightWidth, height: bounds.height)
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
+    public override func hitTest(_ point: NSPoint) -> NSView? {
         bounds.contains(point) ? self : nil
     }
 
-    override func updateTrackingAreas() {
+    public override func updateTrackingAreas() {
         super.updateTrackingAreas()
 
         if let trackingArea {
@@ -74,23 +72,26 @@ final class SystemMonitorStatusView: NSControl {
         trackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
+    public override func mouseEntered(with event: NSEvent) {
+        highlightLayer.isHidden = false
     }
 
-    override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = NSColor.clear.cgColor
+    public override func mouseExited(with event: NSEvent) {
+        highlightLayer.isHidden = true
     }
 
     private func setup() {
         wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.masksToBounds = true
+        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
+        highlightLayer.cornerRadius = 8
+        highlightLayer.masksToBounds = true
+        highlightLayer.isHidden = true
+        layer?.insertSublayer(highlightLayer, at: 0)
         frame = NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness)
         toolTip = "System Monitor"
 
         iconView.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .bold)
         iconView.contentTintColor = .labelColor
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -110,7 +111,10 @@ final class SystemMonitorStatusView: NSControl {
         metricsStack.spacing = -1
         metricsStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let rootStack = NSStackView(views: [iconView, networkStack, metricsStack])
+        let networkMetricsSpacer = NSView()
+        networkMetricsSpacer.translatesAutoresizingMaskIntoConstraints = false
+
+        let rootStack = NSStackView(views: [iconView, networkStack, networkMetricsSpacer, metricsStack])
         rootStack.orientation = .horizontal
         rootStack.alignment = .centerY
         rootStack.spacing = -1
@@ -123,12 +127,13 @@ final class SystemMonitorStatusView: NSControl {
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.statusWidth),
             heightAnchor.constraint(equalToConstant: NSStatusBar.system.thickness),
-            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            rootStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             rootStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            networkStack.widthAnchor.constraint(equalToConstant: 51),
-            iconView.widthAnchor.constraint(equalToConstant: 17),
-            iconView.heightAnchor.constraint(equalToConstant: 17)
+            networkStack.widthAnchor.constraint(equalToConstant: 46),
+            networkMetricsSpacer.widthAnchor.constraint(equalToConstant: 10),
+            iconView.widthAnchor.constraint(equalToConstant: 25),
+            iconView.heightAnchor.constraint(equalToConstant: 40)
         ])
     }
 
@@ -140,7 +145,7 @@ final class SystemMonitorStatusView: NSControl {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = -2
-        stack.widthAnchor.constraint(equalToConstant: title == "SSD" ? 42 : 31).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: title == "SSD" ? 38 : 28).isActive = true
         return stack
     }
 

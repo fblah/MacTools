@@ -3,26 +3,46 @@
 import PackageDescription
 
 let package = Package(
-    name: "MacTools",
+    name: "DMonte",
     platforms: [
         .macOS(.v14)
     ],
     products: [
+        .library(
+            name: "DMonteCore",
+            targets: ["DMonteCore"]
+        ),
         .executable(
-            name: "MacTools",
-            targets: ["MacTools"]
+            name: "DMonte",
+            targets: ["DMonte"]
+        ),
+        .executable(
+            name: "DMonteSystemMonitor",
+            targets: ["DMonteSystemMonitor"]
         )
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.2")
     ],
     targets: [
+        .target(
+            name: "DMonteCore",
+            path: "Sources/DMonteCore"
+        ),
         .executableTarget(
-            name: "MacTools",
+            name: "DMonte",
             dependencies: [
+                "DMonteCore",
                 .product(name: "Sparkle", package: "Sparkle")
             ],
-            path: "Sources/MacTools"
+            path: "Sources/DMonteApp"
+        ),
+        .executableTarget(
+            name: "DMonteSystemMonitor",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteSystemMonitorApp"
         )
     ]
 )

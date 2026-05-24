@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>DMonte</string>
+	<string>DMonteSystemMonitor</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.havokentity.mactools</string>
+	<string>com.havokentity.mactools.systemmonitor</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>DMonte Toolbox</string>
+	<string>DMonte System Monitor</string>
 	<key>CFBundleName</key>
-	<string>DMonte Toolbox</string>
+	<string>DMonte System Monitor</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -28,13 +28,5 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Yahushad Monte</string>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
-	<key>SUFeedURL</key>
-	<string>https://github.com/havokentity/MacTools/releases/latest/download/appcast.xml</string>
-	<key>SUShowReleaseNotes</key>
-	<true/>
-	<key>SUPublicEDKey</key>
-	<string>mUkW+oHH1n9X0bB9gsEIP6PAjCoaEuee9G07Mk5VRs8=</string>
 </dict>
 </plist>
