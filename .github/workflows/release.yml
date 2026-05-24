@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           gh release create "$TAG_NAME" \
-            "dist/MacTools-$VERSION.zip" \
+            "dist/DMonte-Toolbox-$VERSION.zip" \
             "dist/appcast.xml" \
-            --title "MacTools $VERSION" \
-            --notes "MacTools $VERSION release."
+            --title "D'Monte's Toolbox $VERSION" \
+            --notes "D'Monte's Toolbox $VERSION release."

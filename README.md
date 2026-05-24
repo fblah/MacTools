@@ -1,12 +1,13 @@
-# MacTools
+# D'Monte's Toolbox
 
-MacTools is a native macOS menu bar toolbox inspired by the convenience of Parallels Toolbox, built as a lightweight Swift app.
+D'Monte's Toolbox is a native macOS menu bar toolbox inspired by the convenience of Parallels Toolbox, built as a lightweight Swift app.
 
-The first included tool is **System Monitor**: a live menu bar strip showing network, CPU, RAM, and SSD availability. Clicking it opens a compact popover under the tray icon with CPU, memory, disk, network, and uptime metrics.
+The first real tool is **System Monitor**. It can be enabled or disabled from the Library, shows live metrics in the menu bar when enabled, and opens into a compact monitor panel with CPU, memory, disk, network, and uptime metrics.
 
 ## Goals
 
 - Native macOS menu bar experience
+- A toolbox dashboard with enable/disable controls per tool
 - Small, fast, and easy to extend
 - Clean SwiftUI tool views hosted from AppKit
 - Public MIT-licensed repository
@@ -22,7 +23,7 @@ The first included tool is **System Monitor**: a live menu bar strip showing net
 swift run MacTools
 ```
 
-The app runs as a menu bar accessory. Click the waveform icon in the macOS menu bar to open the toolbox popover.
+The app runs as a menu bar accessory. Click the switch icon in the macOS menu bar to open D'Monte's Toolbox.
 
 ## Build
 
@@ -34,12 +35,12 @@ swift build
 
 ```bash
 Scripts/package_app.sh
-open dist/MacTools.app
+open "dist/D'Monte's Toolbox.app"
 ```
 
 ## Release
 
-MacTools uses Sparkle for app updates and GitHub Releases for distribution.
+D'Monte's Toolbox uses Sparkle for app updates and GitHub Releases for distribution.
 
 To publish a release:
 
@@ -51,7 +52,7 @@ git tag v0.2.0
 git push origin main v0.2.0
 ```
 
-The release workflow builds `MacTools.app`, zips it, signs the update archive for Sparkle, writes `appcast.xml`, and attaches both files to the GitHub release.
+The release workflow builds the app, zips it, signs the update archive for Sparkle, writes `appcast.xml`, and attaches both files to the GitHub release.
 
 The app checks this feed:
 
@@ -61,7 +62,7 @@ https://github.com/havokentity/MacTools/releases/latest/download/appcast.xml
 
 ## Roadmap
 
-- Add more toolbox apps behind the sidebar
+- Add more tools behind the Library
 - Add preferences for menu bar display format
 - Optional launch-at-login helper
 

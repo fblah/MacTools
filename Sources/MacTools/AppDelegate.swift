@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            DefaultsKey.systemMonitorEnabled: true
+        ])
+
         configurePopover()
         configureStatusItem()
         monitor.start()
@@ -41,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        popover.contentSize = NSSize(width: 540, height: 560)
+        popover.contentSize = NSSize(width: 760, height: 620)
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = NSHostingController(rootView: rootView)
@@ -57,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.target = self
         button.action = #selector(togglePopover(_:))
-        button.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "MacTools")
+        button.image = NSImage(systemSymbolName: "switch.2", accessibilityDescription: "D'Monte's Toolbox")
         button.imagePosition = .imageLeading
         button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         button.title = "  starting..."
@@ -65,7 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         snapshotSink = monitor.$snapshot
             .receive(on: RunLoop.main)
             .sink { [weak button] snapshot in
-                button?.title = snapshot.menuBarTitle
+                if UserDefaults.standard.bool(forKey: DefaultsKey.systemMonitorEnabled) {
+                    button?.title = snapshot.menuBarTitle
+                } else {
+                    button?.title = "  D'Monte's Toolbox"
+                }
             }
     }
 
