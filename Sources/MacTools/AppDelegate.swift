@@ -27,8 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         configureToolboxPopover()
         configureSystemMonitorPopover()
-        configureToolboxStatusItem()
         syncSystemMonitorStatusItem()
+        configureToolboxStatusItem()
+        configureStatusObservers()
         monitor.start()
     }
 
@@ -91,6 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.title = ""
         button.toolTip = "D'Monte's Toolbox"
 
+    }
+
+    private func configureStatusObservers() {
         snapshotSink = monitor.$snapshot
             .receive(on: RunLoop.main)
             .sink { [weak self] snapshot in
@@ -101,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.syncSystemMonitorStatusItem()
+                self?.keepToolboxAfterMonitor()
             }
     }
 
@@ -136,6 +141,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.view = statusView
         systemMonitorStatusView = statusView
         updateSystemMonitorStatusTitle(monitor.snapshot)
+    }
+
+    private func keepToolboxAfterMonitor() {
+        guard toolboxStatusItem != nil else {
+            return
+        }
+
+        NSStatusBar.system.removeStatusItem(toolboxStatusItem!)
+        toolboxStatusItem = nil
+        configureToolboxStatusItem()
     }
 
     private func updateSystemMonitorStatusTitle(_ snapshot: MetricSnapshot) {
