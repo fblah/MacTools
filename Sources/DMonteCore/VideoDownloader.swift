@@ -77,6 +77,7 @@ fileprivate struct VideoDownloaderPreferences: Sendable {
 final class VideoDownloaderModel: ObservableObject {
     enum DownloadState: Equatable {
         case queued
+        case retrying
         case downloading
         case complete
         case failed
@@ -92,6 +93,7 @@ final class VideoDownloaderModel: ObservableObject {
         var progressDetail: String
         var copyText: String
         var state: DownloadState
+        var retryCount: Int
     }
 
     @Published var urlText = ""
@@ -99,10 +101,14 @@ final class VideoDownloaderModel: ObservableObject {
     @Published var downloads: [DownloadItem] = []
 
     private static let maximumConcurrentDownloads = 3
+    private static let maximumRetryCount = 3
+    private static let retryDelayRange: ClosedRange<Double> = 3...5
     private var downloadTasks: [UUID: Task<Void, Never>] = [:]
+    private var retryTasks: [UUID: Task<Void, Never>] = [:]
 
     deinit {
         downloadTasks.values.forEach { $0.cancel() }
+        retryTasks.values.forEach { $0.cancel() }
     }
 
     var canDownload: Bool {
@@ -119,7 +125,7 @@ final class VideoDownloaderModel: ObservableObject {
         }
 
         let active = downloads.filter { $0.state == .downloading }.count
-        let queued = downloads.filter { $0.state == .queued }.count
+        let queued = downloads.filter { $0.state == .queued || $0.state == .retrying }.count
         let failed = downloads.filter { $0.state == .failed }.count
 
         if active > 0 || queued > 0 {
@@ -136,7 +142,9 @@ final class VideoDownloaderModel: ObservableObject {
     }
 
     var visibleDownloads: [DownloadItem] {
-        let activeOrQueued = downloads.filter { $0.state == .downloading || $0.state == .queued }
+        let activeOrQueued = downloads.filter {
+            $0.state == .downloading || $0.state == .queued || $0.state == .retrying
+        }
         let completed = downloads.filter { $0.state == .complete || $0.state == .failed }.suffix(3)
         return Array((activeOrQueued + completed).suffix(5))
     }
@@ -221,7 +229,8 @@ final class VideoDownloaderModel: ObservableObject {
             progressFraction: nil,
             progressDetail: "Waiting",
             copyText: url,
-            state: .queued
+            state: .queued,
+            retryCount: 0
         )
 
         downloads.append(item)
@@ -258,12 +267,16 @@ final class VideoDownloaderModel: ObservableObject {
         }
 
         downloads[index].state = .downloading
-        downloads[index].status = "Downloading"
+        downloads[index].status = downloads[index].retryCount > 0
+            ? "Retry \(downloads[index].retryCount)/\(Self.maximumRetryCount)"
+            : "Downloading"
         downloads[index].progressFraction = nil
         downloads[index].progressDetail = "Starting"
 
         let url = downloads[index].url
         let preferences = VideoDownloaderPreferences.current
+        retryTasks[id]?.cancel()
+        retryTasks[id] = nil
         downloadTasks[id]?.cancel()
         downloadTasks[id] = Task { [weak self] in
             guard let self else {
@@ -301,6 +314,12 @@ final class VideoDownloaderModel: ObservableObject {
             return
         }
 
+        if !result.succeeded && downloads[index].retryCount < Self.maximumRetryCount {
+            scheduleRetry(id: id, result: result)
+            launchAvailableDownloads()
+            return
+        }
+
         downloads[index].state = result.succeeded ? .complete : .failed
         downloads[index].status = result.title
         downloads[index].detail = result.detail
@@ -316,8 +335,58 @@ final class VideoDownloaderModel: ObservableObject {
         launchAvailableDownloads()
     }
 
+    private func scheduleRetry(id: UUID, result: VideoDownloaderRunner.Result) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let retryCount = downloads[index].retryCount + 1
+        let delay = Double.random(in: Self.retryDelayRange)
+        downloads[index].retryCount = retryCount
+        downloads[index].state = .retrying
+        downloads[index].status = "Retry \(retryCount)/\(Self.maximumRetryCount)"
+        downloads[index].detail = result.detail
+        downloads[index].progressFraction = nil
+        downloads[index].progressDetail = "Retrying in \(Int(delay.rounded()))s"
+        downloads[index].copyText = result.copyText
+
+        retryTasks[id]?.cancel()
+        retryTasks[id] = Task { [weak self] in
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.queueRetry(id: id)
+        }
+    }
+
+    private func queueRetry(id: UUID) {
+        retryTasks[id] = nil
+
+        guard let index = downloads.firstIndex(where: { $0.id == id }),
+              downloads[index].state == .retrying else {
+            launchAvailableDownloads()
+            return
+        }
+
+        downloads[index].state = .queued
+        downloads[index].status = "Queued"
+        downloads[index].progressFraction = nil
+        downloads[index].progressDetail = "Waiting"
+        launchAvailableDownloads()
+    }
+
     private func trimCompletedDownloads() {
-        let activeIDs = Set(downloads.filter { $0.state == .queued || $0.state == .downloading }.map(\.id))
+        let activeIDs = Set(downloads.filter {
+            $0.state == .queued || $0.state == .retrying || $0.state == .downloading
+        }.map(\.id))
         var completedSeen = 0
         downloads = downloads.reversed().filter { item in
             if activeIDs.contains(item.id) {
@@ -921,7 +990,7 @@ private struct DownloadQueueRow: View {
 
     private var iconName: String {
         switch item.state {
-        case .queued:
+        case .queued, .retrying:
             "clock"
         case .downloading:
             "arrow.down.circle.fill"
@@ -934,7 +1003,7 @@ private struct DownloadQueueRow: View {
 
     private var iconColor: Color {
         switch item.state {
-        case .queued:
+        case .queued, .retrying:
             .secondary
         case .downloading:
             .accentColor

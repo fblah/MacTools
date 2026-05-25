@@ -19,22 +19,17 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         configurePopover()
         configureStatusItem()
         configureObservers()
-        configurePopoverShowNotifications()
+        configureEnvironmentObservers()
         SystemMonitorLoginItem.refreshIfEnabled()
         monitor.start()
-
-        if CommandLine.arguments.contains("--open") {
-            DispatchQueue.main.async { [weak self] in
-                self?.showPopover()
-            }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
         snapshotSink = nil
         defaultsSink = nil
-        DistributedNotificationCenter.default().removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
 
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
@@ -60,6 +55,7 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         )
         panel.backgroundColor = .clear
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
         let hostingController = NSHostingController(
             rootView: SystemMonitorPopoverView(
                 monitor: monitor,
@@ -119,17 +115,29 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func configurePopoverShowNotifications() {
-        DistributedNotificationCenter.default().addObserver(
+    private func configureEnvironmentObservers() {
+        NotificationCenter.default.addObserver(
             self,
-            selector: #selector(showPopoverFromNotification(_:)),
-            name: HelperNotifications.showSystemMonitorWindow,
+            selector: #selector(closePopoverForEnvironmentChange(_:)),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(closePopoverForEnvironmentChange(_:)),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(closePopoverForEnvironmentChange(_:)),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil
         )
     }
 
-    @objc private func showPopoverFromNotification(_ notification: Notification) {
-        showPopover()
+    @objc private func closePopoverForEnvironmentChange(_ notification: Notification) {
+        closePopover()
     }
 
     private func updateStatusTitle(_ snapshot: MetricSnapshot) {
@@ -137,7 +145,13 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func togglePopover() {
-        if panel?.isVisible == true {
+        if let panel, panel.isVisible {
+            guard Self.panelIsOnVisibleScreen(panel) else {
+                closePopover()
+                showPopover()
+                return
+            }
+
             closePopover()
         } else {
             showPopover()
@@ -155,6 +169,7 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         panel.setContentSize(panelSize)
         panel.setFrame(Self.panelFrame(for: panelSize, anchoredTo: statusView), display: true)
         panel.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: false)
         startOutsideClickMonitorAfterOpeningClick()
     }
 
@@ -190,6 +205,12 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
 
         NSEvent.removeMonitor(eventMonitor)
         self.eventMonitor = nil
+    }
+
+    private static func panelIsOnVisibleScreen(_ panel: NSPanel) -> Bool {
+        NSScreen.screens.contains { screen in
+            screen.visibleFrame.intersects(panel.frame)
+        }
     }
 
     private func quitSystemMonitor() {

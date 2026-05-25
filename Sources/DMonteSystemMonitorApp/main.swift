@@ -4,15 +4,6 @@ import DMonteCore
 let singleInstanceGuard = SingleInstanceGuard(identifier: "com.havokentity.mactools.systemmonitor")
 
 guard singleInstanceGuard.isPrimary else {
-    if CommandLine.arguments.contains("--open") {
-        DistributedNotificationCenter.default().postNotificationName(
-            HelperNotifications.showSystemMonitorWindow,
-            object: nil,
-            userInfo: nil,
-            deliverImmediately: true
-        )
-    }
-
     exit(EXIT_SUCCESS)
 }
 

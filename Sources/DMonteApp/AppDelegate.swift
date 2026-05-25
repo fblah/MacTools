@@ -235,8 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchHelper(
             bundleIdentifier: Self.systemMonitorHelperBundleIdentifier,
             appName: "DMonte System Monitor.app",
-            executableName: "DMonteSystemMonitor",
-            arguments: ["--open"]
+            executableName: "DMonteSystemMonitor"
         )
         closeToolboxPopover()
     }
