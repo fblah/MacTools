@@ -1,12 +1,12 @@
 import AppKit
 import DMonteCore
 
-let singleInstanceGuard = SingleInstanceGuard(identifier: "com.havokentity.mactools.systemmonitor")
+let singleInstanceGuard = SingleInstanceGuard(identifier: "com.havokentity.mactools.videodownloader")
 
 guard singleInstanceGuard.isPrimary else {
     if CommandLine.arguments.contains("--open") {
         DistributedNotificationCenter.default().postNotificationName(
-            HelperNotifications.showSystemMonitorWindow,
+            HelperNotifications.showVideoDownloaderWindow,
             object: nil,
             userInfo: nil,
             deliverImmediately: true
@@ -17,7 +17,7 @@ guard singleInstanceGuard.isPrimary else {
 }
 
 let app = NSApplication.shared
-let delegate = SystemMonitorAppDelegate()
+let delegate = VideoDownloaderAppDelegate()
 
 app.delegate = delegate
 app.setActivationPolicy(.accessory)

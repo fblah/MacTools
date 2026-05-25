@@ -12,6 +12,7 @@ public struct MetricSnapshot: Equatable, Sendable {
     public var batteryPercent: Double?
     public var isCharging: Bool
     public var uptime: TimeInterval
+    public var cpuTemperatureCelsius: Double?
 
     public var memoryUsage: Double {
         guard memoryTotal > 0 else {
@@ -44,7 +45,8 @@ public struct MetricSnapshot: Equatable, Sendable {
         networkUpRate: UInt64,
         batteryPercent: Double?,
         isCharging: Bool,
-        uptime: TimeInterval
+        uptime: TimeInterval,
+        cpuTemperatureCelsius: Double?
     ) {
         self.timestamp = timestamp
         self.cpuUsage = cpuUsage
@@ -57,6 +59,7 @@ public struct MetricSnapshot: Equatable, Sendable {
         self.batteryPercent = batteryPercent
         self.isCharging = isCharging
         self.uptime = uptime
+        self.cpuTemperatureCelsius = cpuTemperatureCelsius
     }
 
     public static let placeholder = MetricSnapshot(
@@ -70,7 +73,8 @@ public struct MetricSnapshot: Equatable, Sendable {
         networkUpRate: 0,
         batteryPercent: nil,
         isCharging: false,
-        uptime: 0
+        uptime: 0,
+        cpuTemperatureCelsius: nil
     )
 
     public static let preview = MetricSnapshot(
@@ -84,6 +88,7 @@ public struct MetricSnapshot: Equatable, Sendable {
         networkUpRate: 1 * 1_024,
         batteryPercent: nil,
         isCharging: false,
-        uptime: 3 * 86_400 + 13 * 3_600
+        uptime: 3 * 86_400 + 13 * 3_600,
+        cpuTemperatureCelsius: 54.6
     )
 }

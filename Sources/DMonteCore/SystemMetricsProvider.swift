@@ -6,6 +6,7 @@ import Darwin
 final class SystemMetricsProvider {
     private var previousCPU: (idle: UInt64, total: UInt64)?
     private var previousNetwork: (timestamp: Date, down: UInt64, up: UInt64)?
+    private let thermalSensorReader = ThermalSensorReader()
 
     func sample() -> MetricSnapshot {
         let timestamp = Date()
@@ -25,7 +26,8 @@ final class SystemMetricsProvider {
             networkUpRate: network.upRate,
             batteryPercent: battery.percent,
             isCharging: battery.isCharging,
-            uptime: ProcessInfo.processInfo.systemUptime
+            uptime: ProcessInfo.processInfo.systemUptime,
+            cpuTemperatureCelsius: thermalSensorReader.cpuTemperatureCelsius()
         )
     }
 
@@ -116,13 +118,16 @@ final class SystemMetricsProvider {
     private func diskUsage() -> (used: UInt64, total: UInt64) {
         do {
             let values = try URL(fileURLWithPath: "/").resourceValues(forKeys: [
+                .volumeAvailableCapacityKey,
                 .volumeAvailableCapacityForImportantUsageKey,
                 .volumeTotalCapacityKey
             ])
 
             let total = UInt64(values.volumeTotalCapacity ?? 0)
-            let available = UInt64(values.volumeAvailableCapacityForImportantUsage ?? 0)
-            return (used: total > available ? total - available : 0, total: total)
+            let available = UInt64(values.volumeAvailableCapacity ?? 0)
+            let importantAvailable = UInt64(values.volumeAvailableCapacityForImportantUsage ?? 0)
+            let bestAvailable = available > 0 ? available : importantAvailable
+            return (used: total > bestAvailable ? total - bestAvailable : 0, total: total)
         } catch {
             return (used: 0, total: 0)
         }
@@ -165,7 +170,8 @@ final class SystemMetricsProvider {
         for pointer in sequence(first: firstAddress, next: { $0.pointee.ifa_next }) {
             let interface = pointer.pointee
 
-            guard interface.ifa_addr.pointee.sa_family == UInt8(AF_LINK),
+            guard let address = interface.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_LINK),
                   let data = interface.ifa_data?.assumingMemoryBound(to: if_data.self).pointee else {
                 continue
             }

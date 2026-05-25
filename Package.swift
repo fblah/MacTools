@@ -19,6 +19,18 @@ let package = Package(
         .executable(
             name: "DMonteSystemMonitor",
             targets: ["DMonteSystemMonitor"]
+        ),
+        .executable(
+            name: "DMonteUninstaller",
+            targets: ["DMonteUninstaller"]
+        ),
+        .executable(
+            name: "DMonteCleanDrive",
+            targets: ["DMonteCleanDrive"]
+        ),
+        .executable(
+            name: "DMonteVideoDownloader",
+            targets: ["DMonteVideoDownloader"]
         )
     ],
     dependencies: [
@@ -43,6 +55,27 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteSystemMonitorApp"
+        ),
+        .executableTarget(
+            name: "DMonteUninstaller",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteUninstallerApp"
+        ),
+        .executableTarget(
+            name: "DMonteCleanDrive",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteCleanDriveApp"
+        ),
+        .executableTarget(
+            name: "DMonteVideoDownloader",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteVideoDownloaderApp"
         )
     ]
 )

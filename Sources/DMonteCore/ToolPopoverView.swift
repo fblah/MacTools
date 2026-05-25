@@ -2,7 +2,23 @@ import AppKit
 import SwiftUI
 
 public enum DefaultsKey {
-    public static let systemMonitorEnabled = "tool.systemMonitor.enabled"
+    public static let videoDownloaderPreferredQuality = "tool.videoDownloader.preferredQuality"
+    public static let videoDownloaderNonMP4Handling = "tool.videoDownloader.nonMP4Handling"
+    public static let videoDownloaderDownloadsSubtitles = "tool.videoDownloader.downloadsSubtitles"
+    public static let videoDownloaderSaveDirectory = "tool.videoDownloader.saveDirectory"
+    public static let systemMonitorTemperatureUnit = "tool.systemMonitor.temperatureUnit"
+    public static let systemMonitorOpenAtLogin = "tool.systemMonitor.openAtLogin"
+    public static let systemMonitorShowsTrayIcon = "tool.systemMonitor.showsTrayIcon"
+
+    static let obsoleteKeys = [
+        "tool.systemMonitor.enabled",
+        "tool.uninstaller.enabled",
+        "tool.uninstaller.tray.enabled",
+        "tool.cleanDrive.enabled",
+        "tool.cleanDrive.tray.enabled",
+        "tool.videoDownloader.enabled",
+        "tool.videoDownloader.tray.enabled"
+    ]
 }
 
 @MainActor
@@ -10,8 +26,17 @@ public enum AppDefaults {
     public static let shared = UserDefaults(suiteName: "com.havokentity.mactools.shared") ?? .standard
 
     public static func registerDefaults() {
+        DefaultsKey.obsoleteKeys.forEach { shared.removeObject(forKey: $0) }
+
         shared.register(defaults: [
-            DefaultsKey.systemMonitorEnabled: true
+            DefaultsKey.videoDownloaderPreferredQuality: VideoQuality.maximum.rawValue,
+            DefaultsKey.videoDownloaderNonMP4Handling: VideoNonMP4Handling.downloadWithoutConversion.rawValue,
+            DefaultsKey.videoDownloaderDownloadsSubtitles: true,
+            DefaultsKey.videoDownloaderSaveDirectory: FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path,
+            DefaultsKey.systemMonitorTemperatureUnit: TemperatureUnitPreference.celsius.rawValue,
+            DefaultsKey.systemMonitorOpenAtLogin: false,
+            DefaultsKey.systemMonitorShowsTrayIcon: true
         ])
     }
 }
@@ -19,22 +44,29 @@ public enum AppDefaults {
 public struct ToolPopoverView: View {
     var popoverSize: NSSize
     var onOpenSystemMonitor: () -> Void
+    var onOpenUninstaller: () -> Void
+    var onOpenCleanDrive: () -> Void
+    var onOpenVideoDownloader: () -> Void
     var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
-    @AppStorage(DefaultsKey.systemMonitorEnabled, store: AppDefaults.shared) private var isSystemMonitorEnabled = true
-    @State private var selectedSection = ToolboxSection.dashboard
     @State private var searchText = ""
     @State private var isShowingSettings = false
 
     public init(
         popoverSize: NSSize,
         onOpenSystemMonitor: @escaping () -> Void,
+        onOpenUninstaller: @escaping () -> Void,
+        onOpenCleanDrive: @escaping () -> Void,
+        onOpenVideoDownloader: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.popoverSize = popoverSize
         self.onOpenSystemMonitor = onOpenSystemMonitor
+        self.onOpenUninstaller = onOpenUninstaller
+        self.onOpenCleanDrive = onOpenCleanDrive
+        self.onOpenVideoDownloader = onOpenVideoDownloader
         self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
     }
@@ -43,7 +75,6 @@ public struct ToolPopoverView: View {
         ZStack {
             VStack(spacing: 0) {
                 ToolboxHeader(
-                    selectedSection: $selectedSection,
                     searchText: $searchText,
                     onSettings: { isShowingSettings = true },
                     onQuit: onQuit
@@ -52,10 +83,8 @@ public struct ToolPopoverView: View {
                 Divider()
 
                 ToolboxDashboard(
-                    selectedSection: selectedSection,
                     searchText: searchText,
-                    isSystemMonitorEnabled: $isSystemMonitorEnabled,
-                    onOpenTool: onOpenSystemMonitor
+                    onOpenTool: openTool
                 )
             }
 
@@ -73,9 +102,22 @@ public struct ToolPopoverView: View {
         .frostedPanel(cornerRadius: 18)
     }
 
+    private func openTool(_ tool: ToolboxTool) {
+        switch tool {
+        case .systemMonitor:
+            onOpenSystemMonitor()
+        case .uninstaller:
+            onOpenUninstaller()
+        case .cleanDrive:
+            onOpenCleanDrive()
+        case .downloadVideo:
+            onOpenVideoDownloader()
+        }
+    }
+
 }
 
-private extension View {
+extension View {
     func frostedPanel(cornerRadius: CGFloat) -> some View {
         background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -93,7 +135,7 @@ private extension View {
     }
 }
 
-private struct PreferencesOverlay<Content: View>: View {
+struct PreferencesOverlay<Content: View>: View {
     var cornerRadius: CGFloat
     @ViewBuilder var content: Content
 
@@ -123,57 +165,44 @@ private struct PreferencesOverlay<Content: View>: View {
     }
 }
 
-private enum ToolboxSection: String, CaseIterable {
-    case dashboard = "Dashboard"
-    case library = "Library"
-}
-
 private enum ToolboxTool: String, CaseIterable, Identifiable {
     case systemMonitor = "System Monitor"
+    case downloadVideo = "Download Video"
+    case uninstaller = "Uninstall Apps"
+    case cleanDrive = "Clean Drive"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .systemMonitor: "waveform.path.ecg.rectangle"
+        case .downloadVideo: "play.rectangle.fill"
+        case .uninstaller: "trash"
+        case .cleanDrive: "paintbrush.pointed"
         }
     }
 
     var tint: Color {
         switch self {
         case .systemMonitor: .green
+        case .downloadVideo: .purple
+        case .uninstaller: .red
+        case .cleanDrive: .yellow
         }
     }
 }
 
 private struct ToolboxHeader: View {
-    @Binding var selectedSection: ToolboxSection
     @Binding var searchText: String
     var onSettings: () -> Void
     var onQuit: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(ToolboxSection.allCases, id: \.self) { section in
-                Button {
-                    selectedSection = section
-                } label: {
-                    VStack(spacing: 0) {
-                        Text(section.rawValue)
-                            .font(.system(size: 15, weight: section == selectedSection ? .semibold : .medium))
-                            .foregroundStyle(section == selectedSection ? .primary : .secondary)
-                            .frame(height: 40)
-
-                        Rectangle()
-                            .fill(section == selectedSection ? Color.accentColor : Color.clear)
-                            .frame(height: 3)
-                    }
-                    .frame(width: 96)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Divider()
+            Text("D'Monte's Toolbox")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.primary)
+                .padding(.leading, 16)
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
@@ -201,52 +230,26 @@ private struct ToolboxHeader: View {
 }
 
 private struct ToolboxDashboard: View {
-    var selectedSection: ToolboxSection
     var searchText: String
-    @Binding var isSystemMonitorEnabled: Bool
-    var onOpenTool: () -> Void
+    var onOpenTool: (ToolboxTool) -> Void
 
     var body: some View {
         ScrollView {
-            if selectedSection == .library {
-                LibraryView(
-                    searchText: searchText,
-                    isSystemMonitorEnabled: $isSystemMonitorEnabled,
-                    onOpenTool: onOpenTool
-                )
-            } else {
-                DashboardView(
-                    searchText: searchText,
-                    isSystemMonitorEnabled: isSystemMonitorEnabled,
-                    onOpenTool: onOpenTool
-                )
-            }
+            DashboardView(searchText: searchText, onOpenTool: onOpenTool)
         }
     }
 }
 
 private struct DashboardView: View {
     var searchText: String
-    var isSystemMonitorEnabled: Bool
-    var onOpenTool: () -> Void
+    var onOpenTool: (ToolboxTool) -> Void
 
     private var visibleTools: [ToolboxTool] {
-        guard isSystemMonitorEnabled else {
-            return []
-        }
-
-        return filtered([.systemMonitor])
+        filtered(ToolboxTool.allCases)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("D'Monte's Toolbox")
-                .font(.system(size: 18, weight: .bold))
-
-            Text("Enable tools in Library. Each enabled tool gets its own menu bar item.")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-
             if visibleTools.isEmpty {
                 EmptyToolsView()
             } else {
@@ -272,59 +275,15 @@ private struct DashboardView: View {
     }
 }
 
-private struct LibraryView: View {
-    var searchText: String
-    @Binding var isSystemMonitorEnabled: Bool
-    var onOpenTool: () -> Void
-
-    private var tools: [ToolboxTool] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !query.isEmpty else {
-            return ToolboxTool.allCases
-        }
-
-        return ToolboxTool.allCases.filter { $0.rawValue.localizedCaseInsensitiveContains(query) }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Library")
-                .font(.system(size: 18, weight: .bold))
-
-            ForEach(tools) { tool in
-                LibraryToolRow(
-                    tool: tool,
-                    isEnabled: binding(for: tool),
-                    onOpenTool: onOpenTool
-                )
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 18)
-        .frame(minHeight: 330, alignment: .topLeading)
-    }
-
-    private func binding(for tool: ToolboxTool) -> Binding<Bool> {
-        switch tool {
-        case .systemMonitor:
-            $isSystemMonitorEnabled
-        }
-    }
-}
-
 private struct ToolGrid: View {
     var tools: [ToolboxTool]
-    var onOpenTool: () -> Void
+    var onOpenTool: (ToolboxTool) -> Void
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
             ForEach(tools) { tool in
                 ToolboxIcon(tool: tool) {
-                    onOpenTool()
+                    onOpenTool(tool)
                 }
             }
         }
@@ -365,53 +324,7 @@ private struct ToolboxIcon: View {
     }
 }
 
-private struct LibraryToolRow: View {
-    var tool: ToolboxTool
-    @Binding var isEnabled: Bool
-    var onOpenTool: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: tool.icon)
-                .symbolRenderingMode(.hierarchical)
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(tool.tint)
-                .frame(width: 34, height: 34)
-                .background(tool.tint.opacity(0.12))
-                .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(tool.rawValue)
-                    .font(.system(size: 15, weight: .semibold))
-
-                Text("Separate menu bar tool")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                onOpenTool()
-            } label: {
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .disabled(!isEnabled)
-            .opacity(isEnabled ? 1 : 0.35)
-            .help("Open")
-
-            GreenSwitch(isOn: $isEnabled)
-        }
-        .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-private struct GreenSwitch: View {
+struct GreenSwitch: View {
     @Binding var isOn: Bool
 
     var body: some View {
@@ -444,7 +357,7 @@ private struct EmptyToolsView: View {
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            Text("No tools enabled")
+            Text("No matching tools")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
@@ -556,6 +469,7 @@ private struct SystemMonitorPanelLayout {
     var secondaryIconSize: CGFloat { 11 * scale }
     var secondaryFontSize: CGFloat { 11 * scale }
     var detailFontSize: CGFloat { 12.5 * scale }
+    var textLineGap: CGFloat { 4 * scale }
     var networkSpacing: CGFloat { 6 * scale }
     var networkIconSize: CGFloat { 18 * scale }
     var networkIconFontSize: CGFloat { 10 * scale }
@@ -566,6 +480,7 @@ private struct SystemMonitorPanelLayout {
 private struct LoadCard: View {
     var snapshot: MetricSnapshot
     var layout: SystemMonitorPanelLayout
+    @AppStorage(DefaultsKey.systemMonitorTemperatureUnit, store: AppDefaults.shared) private var temperatureUnitRaw = TemperatureUnitPreference.celsius.rawValue
 
     var body: some View {
         MonitorCard(badge: "waveform.path.ecg", layout: layout) {
@@ -574,8 +489,17 @@ private struct LoadCard: View {
             Color.clear.frame(height: layout.visualGap)
 
             MetricTitle(icon: "cpu", title: "CPU LOAD", layout: layout)
-            SecondaryLine(icon: "clock", text: "Uptime \(snapshot.uptime.compactDurationString)", layout: layout)
+            SecondaryLine(icon: "thermometer.medium", text: temperatureText, layout: layout)
         }
+    }
+
+    private var temperatureText: String {
+        guard let celsius = snapshot.cpuTemperatureCelsius else {
+            return "Temperature --"
+        }
+
+        let unit = TemperatureUnitPreference(rawValue: temperatureUnitRaw) ?? .celsius
+        return celsius.temperatureString(unit: unit)
     }
 }
 
@@ -596,6 +520,7 @@ private struct MemoryCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, layout.textLineGap)
         }
     }
 }
@@ -620,12 +545,13 @@ private struct DiskCard: View {
             Color.clear.frame(height: layout.visualGap)
 
             MetricTitle(icon: "internaldrive", title: "Macintosh HD", layout: layout)
-            Text("\(snapshot.diskUsed.bytesString) of \(snapshot.diskTotal.bytesString)")
+            Text("\(snapshot.diskUsed.diskBytesString) of \(snapshot.diskTotal.diskBytesString)")
                 .font(.system(size: layout.detailFontSize, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, layout.textLineGap)
         }
     }
 }
@@ -649,6 +575,7 @@ private struct NetworkCard: View {
                 .font(.system(size: layout.detailFontSize, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, layout.textLineGap)
         }
     }
 }
@@ -754,6 +681,7 @@ private struct SecondaryLine: View {
         }
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, layout.textLineGap)
     }
 }
 
@@ -829,18 +757,19 @@ private struct SettingsView: View {
             } label: {
                 Label("Quit D'Monte's Toolbox", systemImage: "power")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(Color.red.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.red)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color.red.opacity(0.10))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             Spacer()
         }
         .padding(22)
-        .frame(width: 360, height: 220)
+        .frame(width: 340, height: 210)
     }
 }
 
@@ -848,13 +777,16 @@ private struct SystemMonitorSettingsView: View {
     var onQuit: () -> Void
     var onClose: () -> Void
 
-    @AppStorage(DefaultsKey.systemMonitorEnabled, store: AppDefaults.shared) private var isEnabled = true
+    @AppStorage(DefaultsKey.systemMonitorOpenAtLogin, store: AppDefaults.shared) private var opensAtLogin = false
+    @AppStorage(DefaultsKey.systemMonitorShowsTrayIcon, store: AppDefaults.shared) private var showsTrayIcon = true
+    @AppStorage(DefaultsKey.systemMonitorTemperatureUnit, store: AppDefaults.shared) private var temperatureUnitRaw = TemperatureUnitPreference.celsius.rawValue
+    private let layout = SystemMonitorSettingsLayout.current
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: layout.spacing) {
             HStack {
                 Text("System Monitor Settings")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: layout.titleFontSize, weight: .bold))
 
                 Spacer()
 
@@ -862,27 +794,59 @@ private struct SystemMonitorSettingsView: View {
                     onClose()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 26, height: 26)
+                        .font(.system(size: layout.closeIconSize, weight: .bold))
+                        .frame(width: layout.closeButtonSize, height: layout.closeButtonSize)
                 }
                 .buttonStyle(.plain)
             }
 
-            HStack(spacing: 14) {
-                Text("Show System Monitor in menu bar")
-                    .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: layout.rowSpacing) {
+                Text("Open when Mac starts")
+                    .font(.system(size: layout.bodyFontSize, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
 
                 Spacer()
 
-                GreenSwitch(isOn: $isEnabled)
+                GreenSwitch(isOn: $opensAtLogin)
+            }
+            .onChange(of: opensAtLogin) { _, newValue in
+                SystemMonitorLoginItem.setEnabled(newValue)
+            }
+
+            HStack(spacing: layout.rowSpacing) {
+                Text("Show tray icon")
+                    .font(.system(size: layout.bodyFontSize, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+
+                Spacer()
+
+                GreenSwitch(isOn: $showsTrayIcon)
+            }
+
+            VStack(alignment: .leading, spacing: layout.segmentSpacing) {
+                Text("Temperature unit")
+                    .font(.system(size: layout.bodyFontSize, weight: .semibold))
+
+                HStack(spacing: layout.segmentButtonSpacing) {
+                    TemperatureUnitButton(
+                        unit: .celsius,
+                        selectedUnitRaw: $temperatureUnitRaw,
+                        layout: layout
+                    )
+                    TemperatureUnitButton(
+                        unit: .fahrenheit,
+                        selectedUnitRaw: $temperatureUnitRaw,
+                        layout: layout
+                    )
+                }
             }
 
             Divider()
 
-            Text("This tool owns its tray item, monitor popup, and settings. Disable it here or from the Toolbox Library.")
-                .font(.system(size: 12, weight: .medium))
+            Text("Quit closes System Monitor without changing Toolbox launch behavior.")
+                .font(.system(size: layout.descriptionFontSize, weight: .medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -896,7 +860,61 @@ private struct SystemMonitorSettingsView: View {
 
             Spacer()
         }
-        .padding(20)
-        .frame(width: 320, height: 230)
+        .padding(.horizontal, layout.horizontalPadding)
+        .padding(.top, layout.topPadding)
+        .padding(.bottom, layout.bottomPadding)
+        .frame(width: layout.width, height: layout.height)
     }
+}
+
+private struct TemperatureUnitButton: View {
+    var unit: TemperatureUnitPreference
+    @Binding var selectedUnitRaw: String
+    var layout: SystemMonitorSettingsLayout
+
+    var body: some View {
+        Button {
+            selectedUnitRaw = unit.rawValue
+        } label: {
+            Text(unit.label)
+                .font(.system(size: layout.segmentFontSize, weight: .bold))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: layout.segmentHeight)
+                .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.16))
+                .clipShape(RoundedRectangle(cornerRadius: layout.segmentCornerRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: layout.segmentCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var isSelected: Bool {
+        selectedUnitRaw == unit.rawValue
+    }
+}
+
+private struct SystemMonitorSettingsLayout {
+    let scale: CGFloat
+
+    static var current: SystemMonitorSettingsLayout {
+        SystemMonitorSettingsLayout(scale: SystemMonitorPanelLayout.current.scale)
+    }
+
+    var width: CGFloat { (338 * scale).rounded() }
+    var height: CGFloat { (350 * scale).rounded() }
+    var horizontalPadding: CGFloat { 20 * scale }
+    var topPadding: CGFloat { 24 * scale }
+    var bottomPadding: CGFloat { 18 * scale }
+    var spacing: CGFloat { 16 * scale }
+    var titleFontSize: CGFloat { 18 * scale }
+    var closeIconSize: CGFloat { 12 * scale }
+    var closeButtonSize: CGFloat { 26 * scale }
+    var rowSpacing: CGFloat { 14 * scale }
+    var bodyFontSize: CGFloat { 13 * scale }
+    var descriptionFontSize: CGFloat { 12 * scale }
+    var segmentSpacing: CGFloat { 8 * scale }
+    var segmentButtonSpacing: CGFloat { 8 * scale }
+    var segmentFontSize: CGFloat { 12 * scale }
+    var segmentHeight: CGFloat { 28 * scale }
+    var segmentCornerRadius: CGFloat { 7 * scale }
 }

@@ -39,6 +39,9 @@ final class PreviewAppDelegate: NSObject, NSApplicationDelegate {
                 ToolPopoverView(
                     popoverSize: toolboxSize,
                     onOpenSystemMonitor: {},
+                    onOpenUninstaller: {},
+                    onOpenCleanDrive: {},
+                    onOpenVideoDownloader: {},
                     onCheckForUpdates: {},
                     onQuit: {}
                 )

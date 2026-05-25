@@ -1,0 +1,492 @@
+import AppKit
+import SwiftUI
+
+public struct InstalledApplication: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let path: String
+    public let size: UInt64?
+    public let bundleIdentifier: String?
+
+    public var url: URL {
+        URL(fileURLWithPath: path)
+    }
+}
+
+public enum ApplicationScanner {
+    public static func scan() -> [InstalledApplication] {
+        let homeApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+        let roots = [
+            URL(fileURLWithPath: "/Applications"),
+            URL(fileURLWithPath: "/Applications/Utilities"),
+            homeApplications
+        ]
+
+        var seen = Set<String>()
+        var apps: [InstalledApplication] = []
+
+        for root in roots where FileManager.default.fileExists(atPath: root.path) {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey, .localizedNameKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else {
+                continue
+            }
+
+            for case let url as URL in enumerator {
+                guard url.pathExtension == "app" else {
+                    continue
+                }
+
+                let standardizedPath = url.standardizedFileURL.path
+                guard seen.insert(standardizedPath).inserted else {
+                    continue
+                }
+
+                apps.append(
+                    InstalledApplication(
+                        id: standardizedPath,
+                        name: displayName(for: url),
+                        path: standardizedPath,
+                        size: nil,
+                        bundleIdentifier: Bundle(url: url)?.bundleIdentifier
+                    )
+                )
+            }
+        }
+
+        return apps.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    public static func applyingSize(to app: InstalledApplication) -> InstalledApplication {
+        InstalledApplication(
+            id: app.id,
+            name: app.name,
+            path: app.path,
+            size: directorySize(at: app.url),
+            bundleIdentifier: app.bundleIdentifier
+        )
+    }
+
+    private static func displayName(for url: URL) -> String {
+        let localizedName = (try? url.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? url.deletingPathExtension().lastPathComponent
+        return localizedName.hasSuffix(".app") ? String(localizedName.dropLast(4)) : localizedName
+    }
+
+    private static func directorySize(at url: URL) -> UInt64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        return enumerator.reduce(UInt64(0)) { partialResult, entry in
+            guard let fileURL = entry as? URL,
+                  let values = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) else {
+                return partialResult
+            }
+
+            return partialResult + UInt64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+        }
+    }
+}
+
+public struct UninstallerPopoverView: View {
+    var onQuit: () -> Void
+
+    @State private var apps: [InstalledApplication] = []
+    @State private var selectedAppID: InstalledApplication.ID?
+    @State private var searchText = ""
+    @State private var isScanning = true
+    @State private var isSizing = false
+    @State private var scanToken = UUID()
+    @State private var errorMessage: String?
+
+    public init(onQuit: @escaping () -> Void) {
+        self.onQuit = onQuit
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            Divider()
+
+            HStack(spacing: 0) {
+                sidebar
+                    .frame(width: UninstallerSizing.sidebarWidth)
+
+                Divider()
+
+                details
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(width: UninstallerSizing.windowSize.width, height: UninstallerSizing.windowSize.height)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.regularMaterial)
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(red: 0.64, green: 0.61, blue: 0.78).opacity(0.26))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.75)
+        }
+        .task {
+            await reload()
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Text("Uninstall Apps")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .bold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Refresh")
+
+            Button(action: onQuit) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Quit Uninstaller")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.74))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+
+            if isScanning {
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                Text("Scanning apps")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(filteredApps) { app in
+                            AppRow(app: app, isSelected: app.id == selectedAppID) {
+                                selectedAppID = app.id
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 10)
+                }
+            }
+        }
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let selectedApp {
+                HStack(alignment: .top, spacing: 14) {
+                    AppIcon(url: selectedApp.url, size: 64)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(selectedApp.name)
+                            .font(.system(size: 22, weight: .bold))
+
+                        Text(selectedApp.path)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+
+                    Spacer()
+
+                    Text(selectedApp.sizeLabel)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                Text("Move this app bundle to Trash. This does not search for related support files yet.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.red)
+                }
+
+                Spacer()
+
+                HStack {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([selectedApp.url])
+                    } label: {
+                        Label("Reveal", systemImage: "finder")
+                    }
+
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        uninstall(selectedApp)
+                    } label: {
+                        Label("Move to Trash", systemImage: "trash")
+                    }
+                    .keyboardShortcut(.delete, modifiers: [.command])
+                }
+            } else {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(filteredApps.isEmpty ? "No apps found" : "Select an app")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer()
+            }
+        }
+        .padding(22)
+    }
+
+    private var filteredApps: [InstalledApplication] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !query.isEmpty else {
+            return apps
+        }
+
+        return apps.filter {
+            $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var selectedApp: InstalledApplication? {
+        guard let selectedAppID else {
+            return filteredApps.first
+        }
+
+        return apps.first { $0.id == selectedAppID } ?? filteredApps.first
+    }
+
+    private func reload() async {
+        let token = UUID()
+        scanToken = token
+        isScanning = true
+        isSizing = false
+        errorMessage = nil
+        let scannedApps = await Task.detached(priority: .userInitiated) {
+            ApplicationScanner.scan()
+        }.value
+        guard scanToken == token else {
+            return
+        }
+
+        apps = scannedApps
+        selectedAppID = scannedApps.first?.id
+        isScanning = false
+        await loadSizes(for: scannedApps, token: token)
+    }
+
+    private func loadSizes(for scannedApps: [InstalledApplication], token: UUID) async {
+        guard !scannedApps.isEmpty else {
+            return
+        }
+
+        isSizing = true
+
+        for chunk in scannedApps.chunked(into: 6) {
+            guard scanToken == token else {
+                break
+            }
+
+            await withTaskGroup(of: InstalledApplication.self) { group in
+                for app in chunk {
+                    group.addTask {
+                        ApplicationScanner.applyingSize(to: app)
+                    }
+                }
+
+                for await sizedApp in group {
+                    guard scanToken == token else {
+                        group.cancelAll()
+                        return
+                    }
+
+                    if let index = apps.firstIndex(where: { $0.id == sizedApp.id }) {
+                        apps[index] = sizedApp
+                    }
+                }
+            }
+        }
+
+        if scanToken == token {
+            isSizing = false
+        }
+    }
+
+    private func uninstall(_ app: InstalledApplication) {
+        if app.isRunning {
+            let runningAlert = NSAlert()
+            runningAlert.messageText = "\(app.name) is currently running"
+            runningAlert.informativeText = "Quit the app before uninstalling so macOS can move the bundle safely."
+            runningAlert.alertStyle = .warning
+            runningAlert.addButton(withTitle: "Cancel")
+            runningAlert.runModal()
+            return
+        }
+
+        if app.isAppleApplication {
+            let appleAlert = NSAlert()
+            appleAlert.messageText = "Move an Apple app to Trash?"
+            appleAlert.informativeText = "\(app.name) appears to be an Apple/system utility. Removing it may fail or affect macOS features."
+            appleAlert.alertStyle = .critical
+            appleAlert.addButton(withTitle: "Continue")
+            appleAlert.addButton(withTitle: "Cancel")
+
+            guard appleAlert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Move \(app.name) to Trash?"
+        alert.informativeText = app.path
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        do {
+            var resultingURL: NSURL?
+            try FileManager.default.trashItem(at: app.url, resultingItemURL: &resultingURL)
+            apps.removeAll { $0.id == app.id }
+            selectedAppID = filteredApps.first?.id
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct AppRow: View {
+    var app: InstalledApplication
+    var isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                AppIcon(url: app.url, size: 36)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(app.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+
+                    Text(app.sizeLabel)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private extension InstalledApplication {
+    var sizeLabel: String {
+        size?.bytesString ?? "Calculating"
+    }
+
+    var isRunning: Bool {
+        if let bundleIdentifier,
+           !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty {
+            return true
+        }
+
+        return NSWorkspace.shared.runningApplications.contains {
+            $0.bundleURL?.standardizedFileURL.path == url.standardizedFileURL.path
+        }
+    }
+
+    var isAppleApplication: Bool {
+        bundleIdentifier?.hasPrefix("com.apple.") == true
+            || path.hasPrefix("/System/")
+            || path.hasPrefix("/Applications/Utilities/")
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else {
+            return [self]
+        }
+
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
+    }
+}
+
+private struct AppIcon: View {
+    var url: URL
+    var size: CGFloat
+
+    var body: some View {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+            .resizable()
+            .frame(width: size, height: size)
+            .cornerRadius(size * 0.18)
+    }
+}

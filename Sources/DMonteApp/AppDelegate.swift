@@ -8,6 +8,9 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let systemMonitorHelperBundleIdentifier = "com.havokentity.mactools.systemmonitor"
+    private static let uninstallerHelperBundleIdentifier = "com.havokentity.mactools.uninstaller"
+    private static let cleanDriveHelperBundleIdentifier = "com.havokentity.mactools.cleandrive"
+    private static let videoDownloaderHelperBundleIdentifier = "com.havokentity.mactools.videodownloader"
 
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -15,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         userDriverDelegate: nil
     )
     private var toolboxStatusItem: NSStatusItem?
+    private weak var toolboxStatusView: ToolboxStatusView?
     private var toolboxPanel: NSPanel?
     private var defaultsSink: AnyCancellable?
     private var eventMonitor: Any?
@@ -23,13 +27,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDefaults.registerDefaults()
         configureToolboxPopover()
         configureToolboxStatusItem()
-        configureStatusObservers()
-        syncSystemMonitorHelper()
+        configureToolboxShowNotifications()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DistributedNotificationCenter.default().removeObserver(self)
+        defaultsSink = nil
+
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+
+        toolboxPanel?.orderOut(nil)
+        toolboxPanel = nil
+
+        if let toolboxStatusItem {
+            NSStatusBar.system.removeStatusItem(toolboxStatusItem)
+            self.toolboxStatusItem = nil
+            self.toolboxStatusView = nil
         }
     }
 
@@ -74,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleToolboxPopover(from: statusView)
         }
         item.view = statusView
+        toolboxStatusView = statusView
     }
 
     private func toolboxRootView(popoverSize: NSSize) -> some View {
@@ -81,6 +98,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popoverSize: popoverSize,
             onOpenSystemMonitor: { [weak self] in
                 self?.openSystemMonitorFromToolbox()
+            },
+            onOpenUninstaller: { [weak self] in
+                self?.openUninstallerFromToolbox()
+            },
+            onOpenCleanDrive: { [weak self] in
+                self?.openCleanDriveFromToolbox()
+            },
+            onOpenVideoDownloader: { [weak self] in
+                self?.openVideoDownloaderFromToolbox()
             },
             onCheckForUpdates: { [weak self] in
                 self?.updaterController.checkForUpdates(nil)
@@ -91,64 +117,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func configureStatusObservers() {
-        defaultsSink = NotificationCenter.default.publisher(
-            for: UserDefaults.didChangeNotification,
-            object: AppDefaults.shared
+    private func configureToolboxShowNotifications() {
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(showToolboxFromNotification(_:)),
+            name: HelperNotifications.showToolboxWindow,
+            object: nil
         )
-        .receive(on: RunLoop.main)
-        .sink { [weak self] _ in
-            self?.syncSystemMonitorHelper()
-        }
     }
 
-    private func syncSystemMonitorHelper() {
-        let isEnabled = AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorEnabled)
-
-        if isEnabled {
-            launchSystemMonitorHelper()
-        } else {
-            terminateSystemMonitorHelper()
-        }
-    }
-
-    private func launchSystemMonitorHelper() {
-        guard NSRunningApplication
-            .runningApplications(withBundleIdentifier: Self.systemMonitorHelperBundleIdentifier)
-            .isEmpty else {
+    @objc private func showToolboxFromNotification(_ notification: Notification) {
+        guard let statusView = toolboxStatusView else {
             return
         }
 
-        if let helperAppURL = bundledSystemMonitorHelperURL(), FileManager.default.fileExists(atPath: helperAppURL.path) {
+        showToolboxPopover(from: statusView)
+    }
+
+    private func launchHelper(
+        bundleIdentifier: String,
+        appName: String,
+        executableName: String,
+        arguments: [String] = []
+    ) {
+        let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+
+        guard runningApplications.isEmpty else {
+            if arguments.contains("--open") {
+                if bundleIdentifier == Self.systemMonitorHelperBundleIdentifier {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        HelperNotifications.showSystemMonitorWindow,
+                        object: nil,
+                        userInfo: nil,
+                        deliverImmediately: true
+                    )
+                } else if bundleIdentifier == Self.uninstallerHelperBundleIdentifier {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        HelperNotifications.showUninstallerWindow,
+                        object: nil,
+                        userInfo: nil,
+                        deliverImmediately: true
+                    )
+                } else if bundleIdentifier == Self.cleanDriveHelperBundleIdentifier {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        HelperNotifications.showCleanDriveWindow,
+                        object: nil,
+                        userInfo: nil,
+                        deliverImmediately: true
+                    )
+                } else if bundleIdentifier == Self.videoDownloaderHelperBundleIdentifier {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        HelperNotifications.showVideoDownloaderWindow,
+                        object: nil,
+                        userInfo: nil,
+                        deliverImmediately: true
+                    )
+                }
+            }
+
+            return
+        }
+
+        if let helperAppURL = bundledHelperURL(appName: appName), FileManager.default.fileExists(atPath: helperAppURL.path) {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
+            configuration.arguments = arguments
             NSWorkspace.shared.openApplication(at: helperAppURL, configuration: configuration)
             return
         }
 
-        if let helperExecutableURL = debugSystemMonitorExecutableURL(),
+        if let helperExecutableURL = debugHelperExecutableURL(executableName: executableName),
            FileManager.default.fileExists(atPath: helperExecutableURL.path) {
-            _ = try? Process.run(helperExecutableURL, arguments: [])
+            _ = try? Process.run(helperExecutableURL, arguments: arguments)
         }
     }
 
-    private func terminateSystemMonitorHelper() {
-        NSRunningApplication
-            .runningApplications(withBundleIdentifier: Self.systemMonitorHelperBundleIdentifier)
-            .forEach { $0.terminate() }
+    private func terminateHelper(bundleIdentifier: String) {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).forEach { $0.terminate() }
     }
 
-    private func bundledSystemMonitorHelperURL() -> URL? {
-        Bundle.main.bundleURL
-            .appendingPathComponent("Contents")
-            .appendingPathComponent("Helpers")
-            .appendingPathComponent("DMonte System Monitor.app")
+    private func bundledHelperURL(appName: String) -> URL? {
+        Bundle.main.bundleURL.appendingPathComponent("Contents").appendingPathComponent("Helpers").appendingPathComponent(appName)
     }
 
-    private func debugSystemMonitorExecutableURL() -> URL? {
+    private func debugHelperExecutableURL(executableName: String) -> URL? {
         Bundle.main.executableURL?
             .deletingLastPathComponent()
-            .appendingPathComponent("DMonteSystemMonitor")
+            .appendingPathComponent(executableName)
     }
 
     private func toggleToolboxPopover(from view: NSView) {
@@ -177,11 +232,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openSystemMonitorFromToolbox() {
-        guard AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorEnabled) else {
-            return
-        }
+        launchHelper(
+            bundleIdentifier: Self.systemMonitorHelperBundleIdentifier,
+            appName: "DMonte System Monitor.app",
+            executableName: "DMonteSystemMonitor",
+            arguments: ["--open"]
+        )
+        closeToolboxPopover()
+    }
 
-        launchSystemMonitorHelper()
+    private func openUninstallerFromToolbox() {
+        launchHelper(
+            bundleIdentifier: Self.uninstallerHelperBundleIdentifier,
+            appName: "DMonte Uninstaller.app",
+            executableName: "DMonteUninstaller",
+            arguments: ["--open"]
+        )
+        closeToolboxPopover()
+    }
+
+    private func openCleanDriveFromToolbox() {
+        launchHelper(
+            bundleIdentifier: Self.cleanDriveHelperBundleIdentifier,
+            appName: "DMonte Clean Drive.app",
+            executableName: "DMonteCleanDrive",
+            arguments: ["--open"]
+        )
+        closeToolboxPopover()
+    }
+
+    private func openVideoDownloaderFromToolbox() {
+        launchHelper(
+            bundleIdentifier: Self.videoDownloaderHelperBundleIdentifier,
+            appName: "DMonte Video Downloader.app",
+            executableName: "DMonteVideoDownloader",
+            arguments: ["--open"]
+        )
         closeToolboxPopover()
     }
 
@@ -224,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let toolboxStatusItem {
             NSStatusBar.system.removeStatusItem(toolboxStatusItem)
             self.toolboxStatusItem = nil
+            self.toolboxStatusView = nil
         }
 
         NSApp.terminate(nil)

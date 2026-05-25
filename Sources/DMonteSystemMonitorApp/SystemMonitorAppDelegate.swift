@@ -16,22 +16,37 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
 
-        guard AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorEnabled) else {
-            NSApp.terminate(nil)
-            return
-        }
-
         configurePopover()
         configureStatusItem()
         configureObservers()
+        configurePopoverShowNotifications()
+        SystemMonitorLoginItem.refreshIfEnabled()
         monitor.start()
+
+        if CommandLine.arguments.contains("--open") {
+            DispatchQueue.main.async { [weak self] in
+                self?.showPopover()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         monitor.stop()
+        snapshotSink = nil
+        defaultsSink = nil
+        DistributedNotificationCenter.default().removeObserver(self)
 
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+
+        panel?.orderOut(nil)
+
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+            self.statusItem = nil
+            self.statusView = nil
         }
     }
 
@@ -71,10 +86,12 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: SystemMonitorStatusView.statusWidth)
+        let showsIcon = AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorShowsTrayIcon)
+        let item = NSStatusBar.system.statusItem(withLength: SystemMonitorStatusView.statusWidth(showsIcon: showsIcon))
         statusItem = item
 
         let statusView = SystemMonitorStatusView()
+        statusView.applyShowsIcon(showsIcon)
         statusView.onClick = { [weak self] in
             self?.togglePopover()
         }
@@ -95,11 +112,24 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
             object: AppDefaults.shared
         )
         .receive(on: RunLoop.main)
-        .sink { _ in
-            if !AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorEnabled) {
-                NSApp.terminate(nil)
-            }
+        .sink { [weak self] _ in
+            let showsIcon = AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorShowsTrayIcon)
+            self?.statusView?.applyShowsIcon(showsIcon)
+            self?.statusItem?.length = SystemMonitorStatusView.statusWidth(showsIcon: showsIcon)
         }
+    }
+
+    private func configurePopoverShowNotifications() {
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(showPopoverFromNotification(_:)),
+            name: HelperNotifications.showSystemMonitorWindow,
+            object: nil
+        )
+    }
+
+    @objc private func showPopoverFromNotification(_ notification: Notification) {
+        showPopover()
     }
 
     private func updateStatusTitle(_ snapshot: MetricSnapshot) {
@@ -163,7 +193,6 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func quitSystemMonitor() {
-        AppDefaults.shared.set(false, forKey: DefaultsKey.systemMonitorEnabled)
         NSApp.terminate(nil)
     }
 
