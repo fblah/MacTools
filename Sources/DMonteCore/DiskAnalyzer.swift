@@ -149,21 +149,39 @@ public final class DiskScanProgressTracker: Sendable {
     }
 }
 
+public enum FullDiskAccess {
+    /// Best-effort check for whether this app has been granted Full Disk Access.
+    /// Probes a TCC-protected directory that exists on every Mac: without the grant
+    /// the directory listing fails with EPERM; with it (or if the path is absent)
+    /// we treat access as available.
+    public static func isGranted() -> Bool {
+        let probe = (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Application Support/com.apple.TCC")
+        guard FileManager.default.fileExists(atPath: probe) else {
+            return true
+        }
+        return (try? FileManager.default.contentsOfDirectory(atPath: probe)) != nil
+    }
+
+    public static func openSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+}
+
 private enum DiskSkipList {
+    // Only paths that would double-count the volume (firmlinked Data volume under
+    // /System/Volumes), cross into other mounted volumes (/Volumes), or are virtual
+    // filesystems that don't represent real on-disk bytes (/dev, /.vol). Everything
+    // else — caches, swap (/private/var/vm), the Spotlight index, Trashes — is real
+    // usage on this volume and is scanned so it shows up in the treemap.
     private static let skipped: Set<String> = [
         "/System/Volumes",
         "/Volumes",
         "/dev",
-        "/.vol",
-        "/cores",
-        "/private/var/db",
-        "/private/var/folders",
-        "/private/var/vm",
-        "/.Spotlight-V100",
-        "/.fseventsd",
-        "/.DocumentRevisions-V100",
-        "/.TemporaryItems",
-        "/.Trashes"
+        "/.vol"
     ]
 
     static func shouldSkip(_ path: String) -> Bool {
@@ -547,12 +565,13 @@ public struct DiskAnalyzerWindowView: View {
     @State private var selectedVolume: DiskVolume?
     @State private var pathStack: [DiskNode] = []
     @State private var scanCache: [String: DiskNode] = [:]
-    @State private var isScanning = false
-    @State private var scanTask: Task<Void, Never>?
-    @State private var scanTracker: DiskScanProgressTracker?
+    @State private var scanTasks: [String: Task<Void, Never>] = [:]
+    @State private var scanTrackers: [String: DiskScanProgressTracker] = [:]
+    @State private var scanGenerations: [String: Int] = [:]
+    @State private var accessIssueIds: Set<String> = []
     @State private var hoveredNode: DiskNode?
     @State private var isShowingSettings = false
-    @State private var hadAccessIssues = false
+    @State private var fullDiskAccessGranted = true
 
     private let layout = DiskAnalyzerLayout.current
 
@@ -569,7 +588,7 @@ public struct DiskAnalyzerWindowView: View {
                     volumeStrip
                     summaryPanel
                     breadcrumbBar
-                    if hadAccessIssues && !isScanning {
+                    if showsFullDiskAccessHint {
                         fullDiskAccessHint
                     }
                     treemap
@@ -590,10 +609,13 @@ public struct DiskAnalyzerWindowView: View {
         .frame(width: layout.windowSize.width, height: layout.windowSize.height)
         .frostedPanel(cornerRadius: 18)
         .task {
+            fullDiskAccessGranted = FullDiskAccess.isGranted()
             refreshVolumes(autoSelectFirst: true)
         }
         .onDisappear {
-            scanTask?.cancel()
+            for task in scanTasks.values {
+                task.cancel()
+            }
         }
     }
 
@@ -779,7 +801,7 @@ public struct DiskAnalyzerWindowView: View {
                 .font(.system(size: layout.breadcrumbFontSize, weight: .semibold))
                 .foregroundStyle(.orange)
 
-            Text("Some folders couldn't be read. Grant Full Disk Access for complete results.")
+            Text(fullDiskAccessHintText)
                 .font(.system(size: layout.breadcrumbFontSize - 1, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -787,7 +809,7 @@ public struct DiskAnalyzerWindowView: View {
 
             Spacer(minLength: 8)
 
-            Button("Open Settings", action: openFullDiskAccessSettings)
+            Button("Open Settings", action: FullDiskAccess.openSettings)
                 .buttonStyle(.plain)
                 .font(.system(size: layout.breadcrumbFontSize - 1, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
@@ -801,13 +823,6 @@ public struct DiskAnalyzerWindowView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.5)
         }
-    }
-
-    private func openFullDiskAccessSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
-            return
-        }
-        NSWorkspace.shared.open(url)
     }
 
     private var treemap: some View {
@@ -868,6 +883,41 @@ public struct DiskAnalyzerWindowView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var isScanning: Bool {
+        guard let id = selectedVolume?.id else { return false }
+        return scanTasks[id] != nil
+    }
+
+    private var scanTracker: DiskScanProgressTracker? {
+        guard let id = selectedVolume?.id else { return nil }
+        return scanTrackers[id]
+    }
+
+    private var hadAccessIssues: Bool {
+        guard let id = selectedVolume?.id else { return false }
+        return accessIssueIds.contains(id)
+    }
+
+    // Full Disk Access only affects the boot volume — that's where the firmlinked
+    // user-data folders (Mail, Messages, Photos, ~/Library) live. External and
+    // other volumes have no TCC-protected paths, so we never nag about FDA there.
+    private var selectedIsBootVolume: Bool {
+        selectedVolume?.url.path == "/"
+    }
+
+    private var showsFullDiskAccessHint: Bool {
+        guard !isScanning else { return false }
+        if hadAccessIssues { return true }
+        return selectedIsBootVolume && !fullDiskAccessGranted
+    }
+
+    private var fullDiskAccessHintText: String {
+        if selectedIsBootVolume && !fullDiskAccessGranted {
+            return "Grant Full Disk Access so every folder can be measured, then Rescan."
+        }
+        return "Some folders couldn't be read. Grant Full Disk Access for complete results."
+    }
+
     private var currentNode: DiskNode? {
         pathStack.last
     }
@@ -897,20 +947,23 @@ public struct DiskAnalyzerWindowView: View {
         let detected = DiskVolumeProvider.mountedVolumes()
         volumes = detected
 
+        // Drop cached results and tear down in-flight scans for volumes that
+        // have gone away (e.g. an ejected external drive).
         let detectedIds = Set(detected.map(\.id))
-        for cachedId in scanCache.keys where !detectedIds.contains(cachedId) {
-            scanCache.removeValue(forKey: cachedId)
+        for goneId in scanCache.keys where !detectedIds.contains(goneId) {
+            scanCache.removeValue(forKey: goneId)
+        }
+        for goneId in Array(scanTasks.keys) where !detectedIds.contains(goneId) {
+            scanTasks[goneId]?.cancel()
+            scanTasks.removeValue(forKey: goneId)
+            scanTrackers.removeValue(forKey: goneId)
+            accessIssueIds.remove(goneId)
         }
 
         if let selectedVolume, !detected.contains(where: { $0.id == selectedVolume.id }) {
-            scanTask?.cancel()
-            scanTask = nil
             self.selectedVolume = nil
             pathStack = []
-            scanTracker = nil
-            isScanning = false
             hoveredNode = nil
-            hadAccessIssues = false
         }
 
         if autoSelectFirst, selectedVolume == nil, let first = detected.first {
@@ -919,12 +972,11 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private func select(volume: DiskVolume) {
-        scanTask?.cancel()
-        scanTask = nil
-        scanTracker = nil
-        isScanning = false
+        // Switching volumes must NOT cancel an in-flight scan — let it keep
+        // running so its result lands in the cache. Returning to a volume then
+        // shows either its cached tree or its still-running progress, never a
+        // fresh scan (only Rescan forces that).
         hoveredNode = nil
-        hadAccessIssues = false
         selectedVolume = volume
 
         if let cached = scanCache[volume.id] {
@@ -933,27 +985,37 @@ public struct DiskAnalyzerWindowView: View {
         }
 
         pathStack = []
-        startScan(volume: volume)
+        if scanTasks[volume.id] == nil {
+            startScan(volume: volume)
+        }
     }
 
     private func rescan() {
         guard let selectedVolume else { return }
-        scanCache.removeValue(forKey: selectedVolume.id)
+        let id = selectedVolume.id
+        scanTasks[id]?.cancel()
+        scanTasks.removeValue(forKey: id)
+        scanTrackers.removeValue(forKey: id)
+        accessIssueIds.remove(id)
+        scanCache.removeValue(forKey: id)
         pathStack = []
         startScan(volume: selectedVolume)
     }
 
     private func startScan(volume: DiskVolume) {
-        scanTask?.cancel()
-        isScanning = true
+        let volumeId = volume.id
+        scanTasks[volumeId]?.cancel()
         hoveredNode = nil
-        hadAccessIssues = false
+        accessIssueIds.remove(volumeId)
+        fullDiskAccessGranted = FullDiskAccess.isGranted()
+
+        let generation = (scanGenerations[volumeId] ?? 0) + 1
+        scanGenerations[volumeId] = generation
 
         let tracker = DiskScanProgressTracker()
-        scanTracker = tracker
-        let volumeId = volume.id
+        scanTrackers[volumeId] = tracker
 
-        scanTask = Task(priority: .userInitiated) {
+        scanTasks[volumeId] = Task(priority: .userInitiated) {
             let node = await DiskScanner.scan(volume: volume, tracker: tracker)
 
             if Task.isCancelled {
@@ -963,15 +1025,20 @@ public struct DiskAnalyzerWindowView: View {
             let issues = tracker.snapshot.inaccessibleCount
 
             await MainActor.run {
+                // Ignore a stale completion that a newer scan has superseded.
+                guard scanGenerations[volumeId] == generation else { return }
+
                 if let node {
                     scanCache[volumeId] = node
                 }
+                if issues > 0 {
+                    accessIssueIds.insert(volumeId)
+                }
                 if selectedVolume?.id == volumeId {
                     pathStack = node.map { [$0] } ?? []
-                    hadAccessIssues = issues > 0
                 }
-                isScanning = false
-                scanTracker = nil
+                scanTasks.removeValue(forKey: volumeId)
+                scanTrackers.removeValue(forKey: volumeId)
             }
         }
     }
@@ -1002,7 +1069,9 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private func requestQuit() {
-        scanTask?.cancel()
+        for task in scanTasks.values {
+            task.cancel()
+        }
         onQuit()
     }
 }

@@ -80,6 +80,25 @@ if [[ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_PUBLIC_ED_KEY" "$INFO_PLIST"
 fi
 
-codesign --force --deep --sign - "$APP_DIR"
+# Sign with a stable Developer ID identity so TCC grants (e.g. Full Disk Access)
+# persist across rebuilds and moves — they key on bundle id + team, not the
+# binary hash. The identity is never hard-coded here (this repo is public):
+# it comes from the CODESIGN_IDENTITY env var, else the local keychain's
+# Developer ID, else falls back to an ad-hoc signature.
+SIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -m1 'Developer ID Application' \
+    | sed -E 's/^[^"]*"([^"]+)".*/\1/')"
+fi
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  echo "Signed ad-hoc (TCC grants will not persist across rebuilds)"
+else
+  echo "Signed with local Developer ID identity"
+fi
 
 echo "Created $APP_DIR"
