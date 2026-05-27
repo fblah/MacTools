@@ -87,6 +87,11 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteDiskAnalyzerApp"
+        ),
+        .testTarget(
+            name: "DMonteCoreTests",
+            dependencies: ["DMonteCore"],
+            path: "Tests/DMonteCoreTests"
         )
     ]
 )

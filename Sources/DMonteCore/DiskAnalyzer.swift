@@ -106,8 +106,9 @@ public struct DiskScanProgress: Sendable {
     public let bytesScanned: UInt64
     public let itemsScanned: Int
     public let currentPath: String
+    public let inaccessibleCount: Int
 
-    public static let empty = DiskScanProgress(bytesScanned: 0, itemsScanned: 0, currentPath: "")
+    public static let empty = DiskScanProgress(bytesScanned: 0, itemsScanned: 0, currentPath: "", inaccessibleCount: 0)
 }
 
 public final class DiskScanProgressTracker: Sendable {
@@ -115,6 +116,7 @@ public final class DiskScanProgressTracker: Sendable {
         var bytes: UInt64 = 0
         var items: Int = 0
         var path: String = ""
+        var inaccessible: Int = 0
     }
 
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
@@ -123,7 +125,7 @@ public final class DiskScanProgressTracker: Sendable {
 
     public var snapshot: DiskScanProgress {
         state.withLock {
-            DiskScanProgress(bytesScanned: $0.bytes, itemsScanned: $0.items, currentPath: $0.path)
+            DiskScanProgress(bytesScanned: $0.bytes, itemsScanned: $0.items, currentPath: $0.path, inaccessibleCount: $0.inaccessible)
         }
     }
 
@@ -140,6 +142,10 @@ public final class DiskScanProgressTracker: Sendable {
 
     func setCurrentPath(_ path: String) {
         state.withLock { $0.path = path }
+    }
+
+    func recordInaccessible() {
+        state.withLock { $0.inaccessible += 1 }
     }
 }
 
@@ -168,9 +174,30 @@ private enum DiskSkipList {
 public enum DiskScanner {
     private static let parallelDepth = 2
 
+    static let unaccountedNodeName = "Unaccounted / Inaccessible"
+
     public static func scan(volume: DiskVolume, tracker: DiskScanProgressTracker? = nil) async -> DiskNode? {
         tracker?.reset()
-        return await scanRoot(path: volume.url.path, name: volume.name, tracker: tracker)
+        guard let root = await scanRoot(path: volume.url.path, name: volume.name, tracker: tracker) else {
+            return nil
+        }
+        return reconciled(root: root, usedBytes: volume.usedBytes)
+    }
+
+    private static func reconciled(root: DiskNode, usedBytes: UInt64) -> DiskNode {
+        guard usedBytes > root.size else { return root }
+        let gap = usedBytes - root.size
+        guard gap > usedBytes / 200 else { return root }
+
+        let placeholder = DiskNode(
+            path: root.path,
+            name: unaccountedNodeName,
+            isDirectory: false,
+            size: gap,
+            children: []
+        )
+        let children = (root.children + [placeholder]).sorted { $0.size > $1.size }
+        return DiskNode(path: root.path, name: root.name, isDirectory: true, size: usedBytes, children: children)
     }
 
     public static func scan(at url: URL, tracker: DiskScanProgressTracker? = nil) async -> DiskNode? {
@@ -232,6 +259,7 @@ public enum DiskScanner {
         } else if let r = BulkDirectoryReader.read(at: path) {
             result = r
         } else {
+            tracker?.recordInaccessible()
             return DiskNode(path: path, name: name, isDirectory: true, size: 0, children: [])
         }
 
@@ -322,6 +350,7 @@ public enum DiskScanner {
         tracker?.setCurrentPath(path)
 
         guard let result = BulkDirectoryReader.read(at: path) else {
+            tracker?.recordInaccessible()
             return DiskNode(path: path, name: name, isDirectory: true, size: 0, children: [])
         }
 
@@ -523,6 +552,7 @@ public struct DiskAnalyzerWindowView: View {
     @State private var scanTracker: DiskScanProgressTracker?
     @State private var hoveredNode: DiskNode?
     @State private var isShowingSettings = false
+    @State private var hadAccessIssues = false
 
     private let layout = DiskAnalyzerLayout.current
 
@@ -539,6 +569,9 @@ public struct DiskAnalyzerWindowView: View {
                     volumeStrip
                     summaryPanel
                     breadcrumbBar
+                    if hadAccessIssues && !isScanning {
+                        fullDiskAccessHint
+                    }
                     treemap
                 }
                 .padding(.horizontal, layout.contentHorizontalPadding)
@@ -740,6 +773,43 @@ public struct DiskAnalyzerWindowView: View {
         .frame(height: layout.breadcrumbHeight)
     }
 
+    private var fullDiskAccessHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: layout.breadcrumbFontSize, weight: .semibold))
+                .foregroundStyle(.orange)
+
+            Text("Some folders couldn't be read. Grant Full Disk Access for complete results.")
+                .font(.system(size: layout.breadcrumbFontSize - 1, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button("Open Settings", action: openFullDiskAccessSettings)
+                .buttonStyle(.plain)
+                .font(.system(size: layout.breadcrumbFontSize - 1, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.5)
+        }
+    }
+
+    private func openFullDiskAccessSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     private var treemap: some View {
         GeometryReader { proxy in
             let bounds = CGRect(origin: .zero, size: proxy.size)
@@ -840,6 +910,7 @@ public struct DiskAnalyzerWindowView: View {
             scanTracker = nil
             isScanning = false
             hoveredNode = nil
+            hadAccessIssues = false
         }
 
         if autoSelectFirst, selectedVolume == nil, let first = detected.first {
@@ -853,6 +924,7 @@ public struct DiskAnalyzerWindowView: View {
         scanTracker = nil
         isScanning = false
         hoveredNode = nil
+        hadAccessIssues = false
         selectedVolume = volume
 
         if let cached = scanCache[volume.id] {
@@ -875,6 +947,7 @@ public struct DiskAnalyzerWindowView: View {
         scanTask?.cancel()
         isScanning = true
         hoveredNode = nil
+        hadAccessIssues = false
 
         let tracker = DiskScanProgressTracker()
         scanTracker = tracker
@@ -887,12 +960,15 @@ public struct DiskAnalyzerWindowView: View {
                 return
             }
 
+            let issues = tracker.snapshot.inaccessibleCount
+
             await MainActor.run {
                 if let node {
                     scanCache[volumeId] = node
                 }
                 if selectedVolume?.id == volumeId {
                     pathStack = node.map { [$0] } ?? []
+                    hadAccessIssues = issues > 0
                 }
                 isScanning = false
                 scanTracker = nil
