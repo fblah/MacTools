@@ -31,6 +31,10 @@ let package = Package(
         .executable(
             name: "DMonteVideoDownloader",
             targets: ["DMonteVideoDownloader"]
+        ),
+        .executable(
+            name: "DMonteDiskAnalyzer",
+            targets: ["DMonteDiskAnalyzer"]
         )
     ],
     dependencies: [
@@ -76,6 +80,18 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteVideoDownloaderApp"
+        ),
+        .executableTarget(
+            name: "DMonteDiskAnalyzer",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteDiskAnalyzerApp"
+        ),
+        .testTarget(
+            name: "DMonteCoreTests",
+            dependencies: ["DMonteCore"],
+            path: "Tests/DMonteCoreTests"
         )
     ]
 )

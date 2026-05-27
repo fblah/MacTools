@@ -47,6 +47,7 @@ public struct ToolPopoverView: View {
     var onOpenUninstaller: () -> Void
     var onOpenCleanDrive: () -> Void
     var onOpenVideoDownloader: () -> Void
+    var onOpenDiskAnalyzer: () -> Void
     var onCheckForUpdates: () -> Void
     var onQuit: () -> Void
 
@@ -59,6 +60,7 @@ public struct ToolPopoverView: View {
         onOpenUninstaller: @escaping () -> Void,
         onOpenCleanDrive: @escaping () -> Void,
         onOpenVideoDownloader: @escaping () -> Void,
+        onOpenDiskAnalyzer: @escaping () -> Void,
         onCheckForUpdates: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
@@ -67,6 +69,7 @@ public struct ToolPopoverView: View {
         self.onOpenUninstaller = onOpenUninstaller
         self.onOpenCleanDrive = onOpenCleanDrive
         self.onOpenVideoDownloader = onOpenVideoDownloader
+        self.onOpenDiskAnalyzer = onOpenDiskAnalyzer
         self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
     }
@@ -112,6 +115,8 @@ public struct ToolPopoverView: View {
             onOpenCleanDrive()
         case .downloadVideo:
             onOpenVideoDownloader()
+        case .diskAnalyzer:
+            onOpenDiskAnalyzer()
         }
     }
 
@@ -170,6 +175,7 @@ private enum ToolboxTool: String, CaseIterable, Identifiable {
     case downloadVideo = "Download Video"
     case uninstaller = "Uninstall Apps"
     case cleanDrive = "Clean Drive"
+    case diskAnalyzer = "Disk Usage Analyzer"
 
     var id: String { rawValue }
 
@@ -179,6 +185,7 @@ private enum ToolboxTool: String, CaseIterable, Identifiable {
         case .downloadVideo: "play.rectangle.fill"
         case .uninstaller: "trash"
         case .cleanDrive: "paintbrush.pointed"
+        case .diskAnalyzer: "chart.pie.fill"
         }
     }
 
@@ -188,6 +195,7 @@ private enum ToolboxTool: String, CaseIterable, Identifiable {
         case .downloadVideo: .purple
         case .uninstaller: .red
         case .cleanDrive: .yellow
+        case .diskAnalyzer: .blue
         }
     }
 }
