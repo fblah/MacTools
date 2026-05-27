@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let uninstallerHelperBundleIdentifier = "com.havokentity.mactools.uninstaller"
     private static let cleanDriveHelperBundleIdentifier = "com.havokentity.mactools.cleandrive"
     private static let videoDownloaderHelperBundleIdentifier = "com.havokentity.mactools.videodownloader"
+    private static let diskAnalyzerHelperBundleIdentifier = "com.havokentity.mactools.diskanalyzer"
 
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -108,6 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenVideoDownloader: { [weak self] in
                 self?.openVideoDownloaderFromToolbox()
             },
+            onOpenDiskAnalyzer: { [weak self] in
+                self?.openDiskAnalyzerFromToolbox()
+            },
             onCheckForUpdates: { [weak self] in
                 self?.updaterController.checkForUpdates(nil)
             },
@@ -168,6 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else if bundleIdentifier == Self.videoDownloaderHelperBundleIdentifier {
                     DistributedNotificationCenter.default().postNotificationName(
                         HelperNotifications.showVideoDownloaderWindow,
+                        object: nil,
+                        userInfo: nil,
+                        deliverImmediately: true
+                    )
+                } else if bundleIdentifier == Self.diskAnalyzerHelperBundleIdentifier {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        HelperNotifications.showDiskAnalyzerWindow,
                         object: nil,
                         userInfo: nil,
                         deliverImmediately: true
@@ -265,6 +276,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bundleIdentifier: Self.videoDownloaderHelperBundleIdentifier,
             appName: "DMonte Video Downloader.app",
             executableName: "DMonteVideoDownloader",
+            arguments: ["--open"]
+        )
+        closeToolboxPopover()
+    }
+
+    private func openDiskAnalyzerFromToolbox() {
+        launchHelper(
+            bundleIdentifier: Self.diskAnalyzerHelperBundleIdentifier,
+            appName: "DMonte Disk Analyzer.app",
+            executableName: "DMonteDiskAnalyzer",
             arguments: ["--open"]
         )
         closeToolboxPopover()

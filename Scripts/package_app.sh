@@ -26,6 +26,10 @@ VIDEO_DOWNLOADER_MACOS_DIR="$VIDEO_DOWNLOADER_CONTENTS_DIR/MacOS"
 VIDEO_DOWNLOADER_RESOURCES_DIR="$VIDEO_DOWNLOADER_CONTENTS_DIR/Resources"
 VIDEO_DOWNLOADER_BIN_DIR="$VIDEO_DOWNLOADER_RESOURCES_DIR/bin"
 VIDEO_DOWNLOADER_INFO_PLIST="$VIDEO_DOWNLOADER_CONTENTS_DIR/Info.plist"
+DISK_ANALYZER_APP_DIR="$HELPERS_DIR/DMonte Disk Analyzer.app"
+DISK_ANALYZER_CONTENTS_DIR="$DISK_ANALYZER_APP_DIR/Contents"
+DISK_ANALYZER_MACOS_DIR="$DISK_ANALYZER_CONTENTS_DIR/MacOS"
+DISK_ANALYZER_INFO_PLIST="$DISK_ANALYZER_CONTENTS_DIR/Info.plist"
 VERSION="${VERSION_OVERRIDE:-$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)}"
 
@@ -35,13 +39,14 @@ swift build -c release
 YTDLP_PATH="$("$ROOT_DIR/Scripts/fetch_yt_dlp.sh")"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR" "$SYSTEM_MONITOR_MACOS_DIR" "$UNINSTALLER_MACOS_DIR" "$CLEAN_DRIVE_MACOS_DIR" "$VIDEO_DOWNLOADER_MACOS_DIR" "$VIDEO_DOWNLOADER_BIN_DIR"
+mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR" "$SYSTEM_MONITOR_MACOS_DIR" "$UNINSTALLER_MACOS_DIR" "$CLEAN_DRIVE_MACOS_DIR" "$VIDEO_DOWNLOADER_MACOS_DIR" "$VIDEO_DOWNLOADER_BIN_DIR" "$DISK_ANALYZER_MACOS_DIR"
 
 cp "$ROOT_DIR/.build/release/DMonte" "$MACOS_DIR/DMonte"
 cp "$ROOT_DIR/.build/release/DMonteSystemMonitor" "$SYSTEM_MONITOR_MACOS_DIR/DMonteSystemMonitor"
 cp "$ROOT_DIR/.build/release/DMonteUninstaller" "$UNINSTALLER_MACOS_DIR/DMonteUninstaller"
 cp "$ROOT_DIR/.build/release/DMonteCleanDrive" "$CLEAN_DRIVE_MACOS_DIR/DMonteCleanDrive"
 cp "$ROOT_DIR/.build/release/DMonteVideoDownloader" "$VIDEO_DOWNLOADER_MACOS_DIR/DMonteVideoDownloader"
+cp "$ROOT_DIR/.build/release/DMonteDiskAnalyzer" "$DISK_ANALYZER_MACOS_DIR/DMonteDiskAnalyzer"
 cp "$YTDLP_PATH" "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp"
 chmod 755 "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp"
 xattr -cr "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" 2>/dev/null || true
@@ -50,6 +55,7 @@ cp "$ROOT_DIR/Packaging/SystemMonitorInfo.plist" "$SYSTEM_MONITOR_INFO_PLIST"
 cp "$ROOT_DIR/Packaging/UninstallerInfo.plist" "$UNINSTALLER_INFO_PLIST"
 cp "$ROOT_DIR/Packaging/CleanDriveInfo.plist" "$CLEAN_DRIVE_INFO_PLIST"
 cp "$ROOT_DIR/Packaging/VideoDownloaderInfo.plist" "$VIDEO_DOWNLOADER_INFO_PLIST"
+cp "$ROOT_DIR/Packaging/DiskAnalyzerInfo.plist" "$DISK_ANALYZER_INFO_PLIST"
 
 if [[ -d "$ROOT_DIR/.build/release/Sparkle.framework" ]]; then
   cp -R "$ROOT_DIR/.build/release/Sparkle.framework" "$FRAMEWORKS_DIR/"
@@ -67,6 +73,8 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/DMonte
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CLEAN_DRIVE_INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$VIDEO_DOWNLOADER_INFO_PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$VIDEO_DOWNLOADER_INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$DISK_ANALYZER_INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$DISK_ANALYZER_INFO_PLIST"
 
 if [[ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_PUBLIC_ED_KEY" "$INFO_PLIST"
