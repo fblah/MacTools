@@ -149,6 +149,68 @@ public final class DiskScanProgressTracker: Sendable {
     }
 }
 
+/// Cooperative pause/resume gate for a running scan. The scanner awaits
+/// `waitWhilePaused()` at every directory; while paused all callers suspend and
+/// resume together when `resume()` is called. Cancellation always wakes waiters
+/// so a paused scan can still be torn down.
+public final class ScanPauseGate: Sendable {
+    private struct State {
+        var paused = false
+        var nextID = 0
+        var waiters: [Int: CheckedContinuation<Void, Never>] = [:]
+    }
+
+    private let state = OSAllocatedUnfairLock<State>(initialState: State())
+
+    public init() {}
+
+    public var isPaused: Bool {
+        state.withLock { $0.paused }
+    }
+
+    public func pause() {
+        state.withLock { $0.paused = true }
+    }
+
+    public func resume() {
+        drainWaiters(unpause: true).forEach { $0.resume() }
+    }
+
+    @discardableResult
+    private func drainWaiters(unpause: Bool) -> [CheckedContinuation<Void, Never>] {
+        state.withLock { state in
+            if unpause { state.paused = false }
+            let continuations = Array(state.waiters.values)
+            state.waiters.removeAll()
+            return continuations
+        }
+    }
+
+    func waitWhilePaused() async {
+        if Task.isCancelled { return }
+        if !state.withLock({ $0.paused }) { return }
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let waiterID: Int? = state.withLock { state in
+                    guard state.paused else { return nil }
+                    let id = state.nextID
+                    state.nextID += 1
+                    state.waiters[id] = continuation
+                    return id
+                }
+                // No longer paused by the time we acquired the lock — proceed now.
+                if waiterID == nil {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            // Wake everyone so a cancelled scan never hangs on a paused gate.
+            drainWaiters(unpause: false).forEach { $0.resume() }
+        }
+    }
+}
+
 public enum FullDiskAccess {
     /// Best-effort check for whether this app has been granted Full Disk Access.
     /// Probes a TCC-protected directory that exists on every Mac: without the grant
@@ -194,9 +256,9 @@ public enum DiskScanner {
 
     static let unaccountedNodeName = "Unaccounted / Inaccessible"
 
-    public static func scan(volume: DiskVolume, tracker: DiskScanProgressTracker? = nil) async -> DiskNode? {
+    public static func scan(volume: DiskVolume, tracker: DiskScanProgressTracker? = nil, gate: ScanPauseGate? = nil) async -> DiskNode? {
         tracker?.reset()
-        guard let root = await scanRoot(path: volume.url.path, name: volume.name, tracker: tracker) else {
+        guard let root = await scanRoot(path: volume.url.path, name: volume.name, tracker: tracker, gate: gate) else {
             return nil
         }
         return reconciled(root: root, usedBytes: volume.usedBytes)
@@ -218,13 +280,13 @@ public enum DiskScanner {
         return DiskNode(path: root.path, name: root.name, isDirectory: true, size: usedBytes, children: children)
     }
 
-    public static func scan(at url: URL, tracker: DiskScanProgressTracker? = nil) async -> DiskNode? {
+    public static func scan(at url: URL, tracker: DiskScanProgressTracker? = nil, gate: ScanPauseGate? = nil) async -> DiskNode? {
         tracker?.reset()
         let displayName = (try? url.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? url.lastPathComponent
-        return await scanRoot(path: url.path, name: displayName, tracker: tracker)
+        return await scanRoot(path: url.path, name: displayName, tracker: tracker, gate: gate)
     }
 
-    private static func scanRoot(path: String, name: String, tracker: DiskScanProgressTracker?) async -> DiskNode? {
+    private static func scanRoot(path: String, name: String, tracker: DiskScanProgressTracker?, gate: ScanPauseGate?) async -> DiskNode? {
         guard let rootResult = BulkDirectoryReader.read(at: path) else {
             return nil
         }
@@ -240,7 +302,8 @@ public enum DiskScanner {
             depth: 0,
             allowedFsids: allowed,
             preread: rootResult,
-            tracker: tracker
+            tracker: tracker,
+            gate: gate
         )
     }
 
@@ -263,9 +326,15 @@ public enum DiskScanner {
         depth: Int,
         allowedFsids: Set<DiskFilesystemID>,
         preread: BulkDirectoryResult?,
-        tracker: DiskScanProgressTracker?
+        tracker: DiskScanProgressTracker?,
+        gate: ScanPauseGate?
     ) async -> DiskNode? {
         if Task.isCancelled || DiskSkipList.shouldSkip(path) {
+            return nil
+        }
+
+        await gate?.waitWhilePaused()
+        if Task.isCancelled {
             return nil
         }
 
@@ -319,7 +388,8 @@ public enum DiskScanner {
                             depth: childDepth,
                             allowedFsids: allowedFsids,
                             preread: nil,
-                            tracker: tracker
+                            tracker: tracker,
+                            gate: gate
                         )
                     }
                 }
@@ -344,7 +414,7 @@ public enum DiskScanner {
                 }
 
                 let childPath = joinPath(path, dir.name)
-                if let node = scanSerial(path: childPath, name: dir.name, allowedFsids: allowedFsids, tracker: tracker) {
+                if let node = await scanSerial(path: childPath, name: dir.name, allowedFsids: allowedFsids, tracker: tracker, gate: gate) {
                     children.append(node)
                     totalSize &+= node.size
                 }
@@ -359,9 +429,15 @@ public enum DiskScanner {
         path: String,
         name: String,
         allowedFsids: Set<DiskFilesystemID>,
-        tracker: DiskScanProgressTracker?
-    ) -> DiskNode? {
+        tracker: DiskScanProgressTracker?,
+        gate: ScanPauseGate?
+    ) async -> DiskNode? {
         if Task.isCancelled || DiskSkipList.shouldSkip(path) {
+            return nil
+        }
+
+        await gate?.waitWhilePaused()
+        if Task.isCancelled {
             return nil
         }
 
@@ -383,7 +459,7 @@ public enum DiskScanner {
             let childPath = joinPath(path, entry.name)
 
             if entry.isDirectory {
-                if let node = scanSerial(path: childPath, name: entry.name, allowedFsids: allowedFsids, tracker: tracker) {
+                if let node = await scanSerial(path: childPath, name: entry.name, allowedFsids: allowedFsids, tracker: tracker, gate: gate) {
                     children.append(node)
                     totalSize &+= node.size
                 }
@@ -568,7 +644,8 @@ public struct DiskAnalyzerWindowView: View {
     @State private var scanTasks: [String: Task<Void, Never>] = [:]
     @State private var scanTrackers: [String: DiskScanProgressTracker] = [:]
     @State private var scanGenerations: [String: Int] = [:]
-    @State private var accessIssueIds: Set<String> = []
+    @State private var scanGates: [String: ScanPauseGate] = [:]
+    @State private var pausedVolumeIds: Set<String> = []
     @State private var hoveredNode: DiskNode?
     @State private var isShowingSettings = false
     @State private var fullDiskAccessGranted = true
@@ -702,7 +779,9 @@ public struct DiskAnalyzerWindowView: View {
                 ScanProgressPanel(
                     tracker: tracker,
                     volume: selectedVolume,
-                    layout: layout
+                    layout: layout,
+                    isPaused: isSelectedScanPaused,
+                    onTogglePause: toggleScanPause
                 )
             } else {
                 idleSummaryPanel
@@ -893,9 +972,9 @@ public struct DiskAnalyzerWindowView: View {
         return scanTrackers[id]
     }
 
-    private var hadAccessIssues: Bool {
+    private var isSelectedScanPaused: Bool {
         guard let id = selectedVolume?.id else { return false }
-        return accessIssueIds.contains(id)
+        return pausedVolumeIds.contains(id)
     }
 
     // Full Disk Access only affects the boot volume — that's where the firmlinked
@@ -906,16 +985,15 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private var showsFullDiskAccessHint: Bool {
-        guard !isScanning else { return false }
-        if hadAccessIssues { return true }
-        return selectedIsBootVolume && !fullDiskAccessGranted
+        // The banner exists only to prompt granting Full Disk Access, which only
+        // matters for the boot volume. Once it's granted there's nothing left to
+        // act on — any folders still unreadable are root-owned system paths that
+        // FDA can't unlock — so we stop nagging instead of flagging them forever.
+        !isScanning && selectedIsBootVolume && !fullDiskAccessGranted
     }
 
     private var fullDiskAccessHintText: String {
-        if selectedIsBootVolume && !fullDiskAccessGranted {
-            return "Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan to measure every folder."
-        }
-        return "Some folders couldn't be read. Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan."
+        "Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan to measure every folder."
     }
 
     private var currentNode: DiskNode? {
@@ -954,10 +1032,12 @@ public struct DiskAnalyzerWindowView: View {
             scanCache.removeValue(forKey: goneId)
         }
         for goneId in Array(scanTasks.keys) where !detectedIds.contains(goneId) {
+            scanGates[goneId]?.resume()
             scanTasks[goneId]?.cancel()
             scanTasks.removeValue(forKey: goneId)
             scanTrackers.removeValue(forKey: goneId)
-            accessIssueIds.remove(goneId)
+            scanGates.removeValue(forKey: goneId)
+            pausedVolumeIds.remove(goneId)
         }
 
         if let selectedVolume, !detected.contains(where: { $0.id == selectedVolume.id }) {
@@ -972,12 +1052,13 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private func select(volume: DiskVolume) {
-        // Switching volumes must NOT cancel an in-flight scan — let it keep
-        // running so its result lands in the cache. Returning to a volume then
-        // shows either its cached tree or its still-running progress, never a
-        // fresh scan (only Rescan forces that).
+        // Switching volumes must NOT cancel an in-flight scan — let it survive so
+        // its result lands in the cache. We do pause it though: only the visible
+        // drive scans actively, so a background scan stops burning CPU/IO until
+        // the user comes back to it.
         hoveredNode = nil
         selectedVolume = volume
+        focusScans(on: volume.id)
 
         if let cached = scanCache[volume.id] {
             pathStack = [cached]
@@ -993,10 +1074,7 @@ public struct DiskAnalyzerWindowView: View {
     private func rescan() {
         guard let selectedVolume else { return }
         let id = selectedVolume.id
-        scanTasks[id]?.cancel()
-        scanTasks.removeValue(forKey: id)
-        scanTrackers.removeValue(forKey: id)
-        accessIssueIds.remove(id)
+        teardownScan(for: id)
         scanCache.removeValue(forKey: id)
         pathStack = []
         startScan(volume: selectedVolume)
@@ -1004,9 +1082,8 @@ public struct DiskAnalyzerWindowView: View {
 
     private func startScan(volume: DiskVolume) {
         let volumeId = volume.id
-        scanTasks[volumeId]?.cancel()
+        teardownScan(for: volumeId)
         hoveredNode = nil
-        accessIssueIds.remove(volumeId)
         fullDiskAccessGranted = FullDiskAccess.isGranted()
 
         let generation = (scanGenerations[volumeId] ?? 0) + 1
@@ -1015,14 +1092,17 @@ public struct DiskAnalyzerWindowView: View {
         let tracker = DiskScanProgressTracker()
         scanTrackers[volumeId] = tracker
 
+        let gate = ScanPauseGate()
+        scanGates[volumeId] = gate
+        // A brand-new scan is the active one; make sure other drives are paused.
+        focusScans(on: volumeId)
+
         scanTasks[volumeId] = Task(priority: .userInitiated) {
-            let node = await DiskScanner.scan(volume: volume, tracker: tracker)
+            let node = await DiskScanner.scan(volume: volume, tracker: tracker, gate: gate)
 
             if Task.isCancelled {
                 return
             }
-
-            let issues = tracker.snapshot.inaccessibleCount
 
             await MainActor.run {
                 // Ignore a stale completion that a newer scan has superseded.
@@ -1031,15 +1111,49 @@ public struct DiskAnalyzerWindowView: View {
                 if let node {
                     scanCache[volumeId] = node
                 }
-                if issues > 0 {
-                    accessIssueIds.insert(volumeId)
-                }
                 if selectedVolume?.id == volumeId {
                     pathStack = node.map { [$0] } ?? []
                 }
                 scanTasks.removeValue(forKey: volumeId)
                 scanTrackers.removeValue(forKey: volumeId)
+                scanGates.removeValue(forKey: volumeId)
+                pausedVolumeIds.remove(volumeId)
             }
+        }
+    }
+
+    /// Tear down any in-flight scan for a volume (resume first so a paused task
+    /// can observe cancellation), clearing all of its tracking state.
+    private func teardownScan(for volumeId: String) {
+        scanGates[volumeId]?.resume()
+        scanTasks[volumeId]?.cancel()
+        scanTasks.removeValue(forKey: volumeId)
+        scanTrackers.removeValue(forKey: volumeId)
+        scanGates.removeValue(forKey: volumeId)
+        pausedVolumeIds.remove(volumeId)
+    }
+
+    /// Only the visible drive scans actively: pause every other in-flight scan
+    /// and resume the one the user is now looking at.
+    private func focusScans(on volumeId: String) {
+        for (id, gate) in scanGates where id != volumeId {
+            gate.pause()
+            pausedVolumeIds.insert(id)
+        }
+        if let gate = scanGates[volumeId] {
+            gate.resume()
+            pausedVolumeIds.remove(volumeId)
+        }
+    }
+
+    private func toggleScanPause() {
+        guard let id = selectedVolume?.id, let gate = scanGates[id] else { return }
+        if pausedVolumeIds.contains(id) {
+            gate.resume()
+            pausedVolumeIds.remove(id)
+        } else {
+            gate.pause()
+            pausedVolumeIds.insert(id)
         }
     }
 
@@ -1212,6 +1326,8 @@ private struct ScanProgressPanel: View {
     var tracker: DiskScanProgressTracker
     var volume: DiskVolume?
     var layout: DiskAnalyzerLayout
+    var isPaused: Bool
+    var onTogglePause: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { _ in
@@ -1241,36 +1357,50 @@ private struct ScanProgressPanel: View {
                     }
                 }
 
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.black.opacity(0.20))
-                        .frame(height: layout.summaryBarHeight)
-
-                    GeometryReader { proxy in
+                HStack(spacing: 10) {
+                    ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color(red: 0.42, green: 0.66, blue: 0.96), Color(red: 0.62, green: 0.46, blue: 0.92)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
+                            .fill(Color.black.opacity(0.20))
+                            .frame(height: layout.summaryBarHeight)
+
+                        GeometryReader { proxy in
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color(red: 0.42, green: 0.66, blue: 0.96), Color(red: 0.62, green: 0.46, blue: 0.92)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
                                 )
-                            )
-                            .frame(width: proxy.size.width * CGFloat(fraction))
-                            .animation(.easeOut(duration: 0.18), value: fraction)
+                                .frame(width: proxy.size.width * CGFloat(fraction))
+                                .opacity(isPaused ? 0.45 : 1)
+                                .animation(.easeOut(duration: 0.18), value: fraction)
+                        }
+                        .frame(height: layout.summaryBarHeight)
                     }
-                    .frame(height: layout.summaryBarHeight)
-                }
-                .overlay {
-                    Capsule()
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5)
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5)
+                    }
+
+                    Button(action: onTogglePause) {
+                        Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                            .font(.system(size: layout.summarySubFontSize, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: layout.summaryBarHeight + 16, height: layout.summaryBarHeight + 16)
+                            .background(Color.accentColor)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isPaused ? "Resume scan" : "Pause scan")
                 }
 
                 HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
+                    Image(systemName: isPaused ? "pause.circle.fill" : "magnifyingglass")
                         .font(.system(size: layout.summarySubFontSize - 1, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isPaused ? Color.orange : .secondary)
 
-                    Text(displayPath(progress.currentPath))
+                    Text(isPaused ? "Paused — tap play to resume" : displayPath(progress.currentPath))
                         .font(.system(size: layout.summarySubFontSize - 1, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
