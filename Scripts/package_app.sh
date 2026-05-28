@@ -87,9 +87,11 @@ fi
 # Developer ID, else falls back to an ad-hoc signature.
 SIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]]; then
+  # `|| true` so a no-match (e.g. CI runners with no Developer ID) doesn't trip
+  # `set -o pipefail` and abort the build — we just fall back to ad-hoc below.
   SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
     | grep -m1 'Developer ID Application' \
-    | sed -E 's/^[^"]*"([^"]+)".*/\1/')"
+    | sed -E 's/^[^"]*"([^"]+)".*/\1/' || true)"
 fi
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
