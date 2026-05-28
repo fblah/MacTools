@@ -40,16 +40,27 @@ final class DiskAnalyzerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         }
     }
 
+    private static let minimumContentSize = NSSize(width: 520, height: 460)
+    private static let windowedCornerRadius: CGFloat = 18
+
     private func configureWindow() {
         let windowSize = DiskAnalyzerSizing.preferredSize()
+        // Titled + full-size content keeps the frosted, chrome-less look while
+        // allowing the user to resize the window and enter native full screen.
         let window = KeyableWindow(
             contentRect: NSRect(origin: .zero, size: windowSize),
-            styleMask: [.borderless],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.backgroundColor = .clear
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenPrimary]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+
         let hostingController = NSHostingController(
             rootView: DiskAnalyzerWindowView(
                 onQuit: { [weak self] in
@@ -57,14 +68,13 @@ final class DiskAnalyzerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
                 }
             )
         )
-        hostingController.view.frame = NSRect(origin: .zero, size: windowSize)
+        hostingController.view.autoresizingMask = [.width, .height]
         hostingController.view.wantsLayer = true
-        hostingController.view.layer?.cornerRadius = 18
+        hostingController.view.layer?.cornerRadius = Self.windowedCornerRadius
         hostingController.view.layer?.cornerCurve = .continuous
         hostingController.view.layer?.masksToBounds = true
         window.contentViewController = hostingController
-        window.contentMinSize = windowSize
-        window.contentMaxSize = windowSize
+        window.contentMinSize = Self.minimumContentSize
         window.setContentSize(windowSize)
         window.delegate = self
         window.hasShadow = true
@@ -73,6 +83,16 @@ final class DiskAnalyzerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         window.level = .normal
         window.title = "Disk Usage Analyzer"
         self.window = window
+    }
+
+    // Drop the rounded corners in full screen (where the content fills the whole
+    // display) and restore them when returning to a windowed frame.
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        window?.contentViewController?.view.layer?.cornerRadius = 0
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        window?.contentViewController?.view.layer?.cornerRadius = Self.windowedCornerRadius
     }
 
     private func configureWindowShowNotifications() {
@@ -93,13 +113,10 @@ final class DiskAnalyzerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
             return
         }
 
-        let windowSize = DiskAnalyzerSizing.preferredSize()
-        window.contentMinSize = windowSize
-        window.contentMaxSize = windowSize
-
-        if hasPositionedWindow {
-            window.setContentSize(windowSize)
-        } else {
+        // Only size/position on first show; afterwards preserve whatever size the
+        // user has dragged the window to (or full screen).
+        if !hasPositionedWindow {
+            let windowSize = DiskAnalyzerSizing.preferredSize()
             let frame = if let view {
                 Self.windowFrame(for: windowSize, near: view)
             } else {

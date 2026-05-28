@@ -649,6 +649,7 @@ public struct DiskAnalyzerWindowView: View {
     @State private var hoveredNode: DiskNode?
     @State private var isShowingSettings = false
     @State private var fullDiskAccessGranted = true
+    @State private var isFullScreen = false
 
     private let layout = DiskAnalyzerLayout.current
 
@@ -683,17 +684,43 @@ public struct DiskAnalyzerWindowView: View {
                 }
             }
         }
-        .frame(width: layout.windowSize.width, height: layout.windowSize.height)
-        .frostedPanel(cornerRadius: 18)
+        .frame(
+            minWidth: layout.minWindowSize.width,
+            maxWidth: .infinity,
+            minHeight: layout.minWindowSize.height,
+            maxHeight: .infinity
+        )
+        .frostedPanel(cornerRadius: isFullScreen ? 0 : 18)
         .task {
             fullDiskAccessGranted = FullDiskAccess.isGranted()
             refreshVolumes(autoSelectFirst: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            isFullScreen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            isFullScreen = false
+            // Return to a background (menu-bar-launched) app once we leave full screen.
+            NSApp.setActivationPolicy(.accessory)
         }
         .onDisappear {
             for task in scanTasks.values {
                 task.cancel()
             }
         }
+    }
+
+    private func toggleFullScreen() {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else { return }
+        let entering = !window.styleMask.contains(.fullScreen)
+        if entering {
+            // An accessory (LSUIElement) app can't reliably own a full-screen
+            // space, so briefly become a regular app for the transition; we drop
+            // back to accessory when full screen exits.
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        window.toggleFullScreen(nil)
     }
 
     private var header: some View {
@@ -726,6 +753,15 @@ public struct DiskAnalyzerWindowView: View {
                 .help("Rescan")
                 .disabled(selectedVolume == nil || isScanning)
                 .opacity(selectedVolume == nil || isScanning ? 0.45 : 1)
+
+                Button(action: toggleFullScreen) {
+                    Image(systemName: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: layout.headerIconSize, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: layout.headerButtonSize, height: layout.headerButtonSize)
+                }
+                .buttonStyle(.plain)
+                .help(isFullScreen ? "Exit Full Screen" : "Enter Full Screen")
 
                 Button {
                     isShowingSettings = true
@@ -1241,31 +1277,36 @@ private struct TreemapTile: View {
 
     var body: some View {
         let color = DiskItemPalette.color(for: entry.node)
-        let showLabel = entry.rect.width >= layout.tileLabelMinSide && entry.rect.height >= layout.tileLabelMinSide
+        let showName = entry.rect.width >= layout.tileNameMinWidth && entry.rect.height >= layout.tileNameMinHeight
+        let showSize = showName && entry.rect.height >= layout.tileSizeMinHeight
 
         ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(color.opacity(isHovered ? 0.96 : 0.86))
 
-            if showLabel {
+            if showName {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.node.name)
                         .font(.system(size: layout.tileLabelFontSize, weight: .semibold))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .truncationMode(.tail)
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
 
-                    if entry.rect.height >= layout.tileLabelMinSide * 1.6 {
+                    if showSize {
                         Text(entry.node.size.diskBytesString)
                             .font(.system(size: layout.tileLabelFontSize - 1, weight: .medium, design: .rounded))
                             .foregroundStyle(Color.white.opacity(0.9))
                             .shadow(color: .black.opacity(0.45), radius: 1, y: 0.5)
                     }
                 }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+        .clipped()
         .overlay {
             Rectangle()
                 .strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5)
@@ -1486,6 +1527,7 @@ private struct DiskAnalyzerLayout {
     }
 
     var windowSize: NSSize { DiskAnalyzerSizing.preferredSize() }
+    var minWindowSize: NSSize { NSSize(width: 520, height: 460) }
     var sectionSpacing: CGFloat { 14 * scale }
     var contentHorizontalPadding: CGFloat { 22 * scale }
     var contentBottomPadding: CGFloat { 22 * scale }
@@ -1522,6 +1564,10 @@ private struct DiskAnalyzerLayout {
     var treemapInnerPadding: CGFloat { 10 * scale }
     var tileLabelFontSize: CGFloat { 11 * scale }
     var tileLabelMinSide: CGFloat { 56 * scale }
+    // Lower thresholds so more (and smaller) tiles get at least a name label.
+    var tileNameMinWidth: CGFloat { 36 * scale }
+    var tileNameMinHeight: CGFloat { 18 * scale }
+    var tileSizeMinHeight: CGFloat { 44 * scale }
     var hoverChipIconSize: CGFloat { 11 * scale }
     var hoverChipFontSize: CGFloat { 12 * scale }
     var emptyIconSize: CGFloat { 38 * scale }
