@@ -88,9 +88,14 @@ enum BulkDirectoryReader {
 
                 // First attribute (we requested ATTR_CMN_RETURNED_ATTRS): the set of
                 // attributes the kernel actually returned for this entry.
+                // The common attributes (RETURNED_ATTRS, NAME, FSID, OBJTYPE) are
+                // always present and packed in this fixed order. A malformed entry
+                // that can't hold them is skipped individually — never `break`, which
+                // would abandon every remaining entry in the batch.
                 let returnedOffset = fieldOffset
                 guard entryStart.advanced(by: returnedOffset + MemoryLayout<attribute_set_t>.size) <= entryEnd else {
-                    break
+                    cursor = entryEnd
+                    continue
                 }
                 let returned = entryStart
                     .advanced(by: returnedOffset)
@@ -106,7 +111,8 @@ enum BulkDirectoryReader {
 
                 let nameRefOffset = fieldOffset
                 guard entryStart.advanced(by: nameRefOffset + MemoryLayout<attrreference_t>.size) <= entryEnd else {
-                    break
+                    cursor = entryEnd
+                    continue
                 }
                 let nameRef = entryStart
                     .advanced(by: nameRefOffset)
@@ -117,7 +123,8 @@ enum BulkDirectoryReader {
 
                 let fsidOffset = fieldOffset
                 guard entryStart.advanced(by: fsidOffset + MemoryLayout<fsid_t>.size) <= entryEnd else {
-                    break
+                    cursor = entryEnd
+                    continue
                 }
                 let entryFsid = entryStart
                     .advanced(by: fsidOffset)
@@ -126,20 +133,26 @@ enum BulkDirectoryReader {
 
                 let objTypeOffset = fieldOffset
                 guard entryStart.advanced(by: objTypeOffset + MemoryLayout<UInt32>.size) <= entryEnd else {
-                    break
+                    cursor = entryEnd
+                    continue
                 }
                 let objType = entryStart
                     .advanced(by: objTypeOffset)
                     .loadUnaligned(as: UInt32.self)
                 fieldOffset += MemoryLayout<UInt32>.size
 
+                // ATTR_FILE_ALLOCSIZE is a FILE attribute: FSOPT_PACK_INVAL_ATTRS does
+                // NOT pad it for entries where it's invalid (directories, symlinks), so
+                // those records are shorter and the field is simply absent. Read it only
+                // when the returned bitmap reports it AND it fits within the entry; a
+                // missing alloc field is normal and must not break or skip the entry.
                 let allocOffset = fieldOffset
-                guard entryStart.advanced(by: allocOffset + MemoryLayout<Int64>.size) <= entryEnd else {
-                    break
+                var allocRaw: Int64 = 0
+                if allocReturned, entryStart.advanced(by: allocOffset + MemoryLayout<Int64>.size) <= entryEnd {
+                    allocRaw = entryStart
+                        .advanced(by: allocOffset)
+                        .loadUnaligned(as: Int64.self)
                 }
-                let allocRaw = entryStart
-                    .advanced(by: allocOffset)
-                    .loadUnaligned(as: Int64.self)
 
                 // Without a trustworthy name or object type we cannot classify the entry.
                 guard nameReturned, objTypeReturned else {
