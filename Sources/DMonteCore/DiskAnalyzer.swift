@@ -913,9 +913,9 @@ public struct DiskAnalyzerWindowView: View {
 
     private var fullDiskAccessHintText: String {
         if selectedIsBootVolume && !fullDiskAccessGranted {
-            return "Grant Full Disk Access so every folder can be measured, then Rescan."
+            return "Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan to measure every folder."
         }
-        return "Some folders couldn't be read. Grant Full Disk Access for complete results."
+        return "Some folders couldn't be read. Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan."
     }
 
     private var currentNode: DiskNode? {
