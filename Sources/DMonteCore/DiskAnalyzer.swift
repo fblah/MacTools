@@ -961,8 +961,7 @@ public struct DiskAnalyzerWindowView: View {
                                 isHovered: hoveredNode?.id == entry.node.id,
                                 layout: layout
                             )
-                            .frame(width: max(0, entry.rect.width), height: max(0, entry.rect.height), alignment: .topLeading)
-                            .offset(x: entry.rect.minX, y: entry.rect.minY)
+                            .frame(width: max(0, entry.rect.width), height: max(0, entry.rect.height))
                             .onHover { hovering in
                                 if hovering {
                                     hoveredNode = entry.node
@@ -973,6 +972,10 @@ public struct DiskAnalyzerWindowView: View {
                             .onTapGesture(count: 2) { revealInFinder(node: entry.node) }
                             .onTapGesture { handleTap(node: entry.node) }
                             .help(tooltip(for: entry.node))
+                            // Use .position (not .frame+.offset): offset moves only the
+                            // rendering, leaving every tile's hit region stacked at the
+                            // top-left, so hovering one tile highlighted another.
+                            .position(x: entry.rect.midX, y: entry.rect.midY)
                         }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
