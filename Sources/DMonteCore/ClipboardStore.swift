@@ -22,7 +22,17 @@ public final class ClipboardStore: ObservableObject {
         imagesDirectory = directory.appendingPathComponent("Images", isDirectory: true)
         historyFileURL = directory.appendingPathComponent("history.json")
 
-        try? FileManager.default.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
+        // Clipboard history can contain sensitive copied text/images, so lock the storage
+        // down to the current user (0700). createDirectory's POSIX attribute applies to dirs
+        // it creates; we also re-assert it in case the directory predates this hardening.
+        let ownerOnly: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
+        try? FileManager.default.createDirectory(
+            at: imagesDirectory,
+            withIntermediateDirectories: true,
+            attributes: ownerOnly
+        )
+        try? FileManager.default.setAttributes(ownerOnly, ofItemAtPath: directory.path)
+        try? FileManager.default.setAttributes(ownerOnly, ofItemAtPath: imagesDirectory.path)
         load()
     }
 
@@ -153,6 +163,8 @@ public final class ClipboardStore: ObservableObject {
     private nonisolated static func writeHistory(_ entries: [ClipboardEntry], to url: URL) {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: url, options: .atomic)
+        // The history file holds copied text verbatim; restrict it to the owner (0600).
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     // MARK: - Off-main builders

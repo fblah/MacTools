@@ -46,6 +46,36 @@ echo "Fetching yt-dlp from $DOWNLOAD_URL" >&2
 tmp_path="$OUTPUT_PATH.tmp"
 rm -f "$tmp_path"
 curl "${curl_args[@]}" "$DOWNLOAD_URL" --output "$tmp_path"
+
+# Verify the download's SHA-256 before trusting the binary. Prefer an explicitly
+# pinned hash via YT_DLP_SHA256; otherwise fetch yt-dlp's official SHA2-256SUMS
+# for this release and match the entry for yt-dlp_macos. We fail closed only when
+# we actually have an expected hash to compare against — a missing sums file (old
+# release / network hiccup) logs a warning rather than blocking the build.
+actual_sha="$(shasum -a 256 "$tmp_path" | awk '{print $1}')"
+expected_sha="${YT_DLP_SHA256:-}"
+
+if [[ -z "$expected_sha" ]]; then
+  sums_url="https://github.com/yt-dlp/yt-dlp/releases/download/$RESOLVED_YT_DLP_VERSION/SHA2-256SUMS"
+  sums="$(curl --silent "${curl_args[@]}" "$sums_url" || true)"
+  if [[ -n "$sums" ]]; then
+    expected_sha="$(awk '$2 == "yt-dlp_macos" {print $1}' <<< "$sums" | head -n 1)"
+  fi
+fi
+
+if [[ -n "$expected_sha" ]]; then
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    echo "yt-dlp checksum mismatch for $RESOLVED_YT_DLP_VERSION" >&2
+    echo "  expected: $expected_sha" >&2
+    echo "  actual:   $actual_sha" >&2
+    rm -f "$tmp_path"
+    exit 1
+  fi
+  echo "yt-dlp checksum verified ($actual_sha)" >&2
+else
+  echo "warning: no SHA-256 available to verify yt-dlp $RESOLVED_YT_DLP_VERSION (got $actual_sha)" >&2
+fi
+
 mv "$tmp_path" "$OUTPUT_PATH"
 chmod 755 "$OUTPUT_PATH"
 xattr -cr "$OUTPUT_PATH" 2>/dev/null || true

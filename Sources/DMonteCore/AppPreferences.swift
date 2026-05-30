@@ -1,5 +1,46 @@
 import Foundation
 
+/// Reads the running bundle's version metadata so the UI can show it without hard-coding.
+public enum AppInfo {
+    /// Marketing version, e.g. "0.6.0" (CFBundleShortVersionString). Falls back to the VERSION
+    /// file when running unbundled (e.g. `swift run` during development).
+    public static var shortVersion: String {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+           !value.isEmpty {
+            return value
+        }
+        return developmentVersion
+    }
+
+    /// Build number, e.g. "42" (CFBundleVersion). Empty when unavailable.
+    public static var buildNumber: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? ""
+    }
+
+    /// "Version 0.6.0 (42)" — or "Version 0.6.0" when there's no distinct build number.
+    public static var displayVersion: String {
+        let build = buildNumber
+        if build.isEmpty || build == shortVersion {
+            return "Version \(shortVersion)"
+        }
+        return "Version \(shortVersion) (\(build))"
+    }
+
+    /// Best-effort read of the repo VERSION file for unbundled dev runs; "dev" if not found.
+    private static var developmentVersion: String {
+        var dir = URL(fileURLWithPath: #filePath)
+        for _ in 0..<8 {
+            dir.deleteLastPathComponent()
+            let candidate = dir.appendingPathComponent("VERSION")
+            if let text = try? String(contentsOf: candidate, encoding: .utf8) {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return "dev"
+    }
+}
+
 public enum DefaultsKey {
     public static let videoDownloaderPreferredQuality = "tool.videoDownloader.preferredQuality"
     public static let videoDownloaderNonMP4Handling = "tool.videoDownloader.nonMP4Handling"

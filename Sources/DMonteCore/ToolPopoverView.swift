@@ -678,9 +678,14 @@ private struct SettingsView: View {
             .foregroundStyle(.red)
 
             Spacer()
+
+            Text(AppInfo.displayVersion)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(22)
-        .frame(width: 340, height: 210)
+        .frame(width: 340, height: 230)
     }
 }
 

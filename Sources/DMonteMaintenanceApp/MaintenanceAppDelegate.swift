@@ -178,7 +178,12 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentViewController = hosting
-        panel.contentView?.wantsLayer = true
+        // Round + clip the hosting layer so the panel's shadow follows the rounded
+        // .frostedPanel edge instead of casting a square halo (matches the other tools).
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.cornerRadius = 18
+        hosting.view.layer?.cornerCurve = .continuous
+        hosting.view.layer?.masksToBounds = true
 
         self.panel = panel
         return panel

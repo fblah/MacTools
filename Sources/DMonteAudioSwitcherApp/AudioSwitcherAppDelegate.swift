@@ -82,6 +82,12 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
             self?.quit()
         })
         let hosting = NSHostingView(rootView: content)
+        // Round + clip the hosting layer so the panel's shadow follows the rounded
+        // .frostedPanel edge instead of casting a square halo (matches the other tools).
+        hosting.wantsLayer = true
+        hosting.layer?.cornerRadius = 18
+        hosting.layer?.cornerCurve = .continuous
+        hosting.layer?.masksToBounds = true
         let panel = KeyablePanel(
             contentRect: NSRect(
                 x: 0,

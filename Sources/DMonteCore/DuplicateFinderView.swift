@@ -77,9 +77,9 @@ public struct DuplicateFinderWindowView: View {
     }
 
     private var idleView: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: layout.contentSpacing) {
             Text("Choose a folder to scan recursively for files with identical content. Extra copies can be moved to the Trash, where they remain recoverable.")
-                .font(.system(size: 13))
+                .font(.system(size: layout.bodyFontSize))
                 .foregroundStyle(Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -97,7 +97,7 @@ public struct DuplicateFinderWindowView: View {
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 Text(controller.progressText)
-                    .font(.system(size: 13))
+                    .font(.system(size: layout.bodyFontSize))
                     .foregroundStyle(Color.secondary)
             }
             Spacer(minLength: 0)
@@ -123,12 +123,12 @@ public struct DuplicateFinderWindowView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(controller.scannedPathName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: layout.bodyFontSize, weight: .semibold))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(controller.summaryText)
-                    .font(.system(size: 11))
+                    .font(.system(size: layout.captionFontSize))
                     .foregroundStyle(Color.secondary)
             }
 
@@ -141,13 +141,13 @@ public struct DuplicateFinderWindowView: View {
     }
 
     private var emptyResults: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: layout.groupInnerSpacing) {
             Text("No duplicate files were found.")
-                .font(.system(size: 13))
+                .font(.system(size: layout.bodyFontSize))
                 .foregroundStyle(Color.secondary)
             if let skips = controller.skipNotice {
                 Text(skips)
-                    .font(.system(size: 11))
+                    .font(.system(size: layout.captionFontSize))
                     .foregroundStyle(Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -161,6 +161,7 @@ public struct DuplicateFinderWindowView: View {
                 ForEach(controller.groups) { group in
                     DuplicateGroupView(
                         group: group,
+                        layout: layout,
                         isSelected: { controller.isSelected($0) },
                         onToggle: { controller.toggle($0) }
                     )
@@ -168,7 +169,7 @@ public struct DuplicateFinderWindowView: View {
 
                 if let skips = controller.skipNotice {
                     Text(skips)
-                        .font(.system(size: 11))
+                        .font(.system(size: layout.captionFontSize))
                         .foregroundStyle(Color.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 4)
@@ -182,7 +183,7 @@ public struct DuplicateFinderWindowView: View {
     private var footer: some View {
         HStack {
             Text(controller.selectionText)
-                .font(.system(size: 12))
+                .font(.system(size: layout.rowTitleFontSize))
                 .foregroundStyle(Color.secondary)
 
             Spacer()
@@ -203,18 +204,19 @@ public struct DuplicateFinderWindowView: View {
 
 private struct DuplicateGroupView: View {
     let group: DuplicateFinderGroup
+    let layout: DuplicateFinderLayout
     let isSelected: (URL) -> Bool
     let onToggle: (URL) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: layout.groupInnerSpacing) {
             HStack {
                 Text("\(group.files.count) identical files")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: layout.groupTitleFontSize, weight: .semibold))
                     .foregroundStyle(Color.primary)
                 Spacer()
                 Text(group.size.diskBytesString + " each")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.system(size: layout.groupSizeFontSize, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.secondary)
                     .monospacedDigit()
             }
@@ -222,19 +224,20 @@ private struct DuplicateGroupView: View {
             ForEach(group.files) { file in
                 DuplicateFileRow(
                     file: file,
+                    layout: layout,
                     isSelected: isSelected(file.url),
                     onToggle: { onToggle(file.url) }
                 )
             }
         }
-        .padding(12)
+        .padding(layout.groupPadding)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+            RoundedRectangle(cornerRadius: layout.groupCornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: layout.groupCornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
         )
     }
 }
@@ -243,24 +246,25 @@ private struct DuplicateGroupView: View {
 
 private struct DuplicateFileRow: View {
     let file: DuplicateFinderFile
+    let layout: DuplicateFinderLayout
     let isSelected: Bool
     let onToggle: () -> Void
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(spacing: 10) {
+            HStack(spacing: layout.rowSpacing) {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 14))
+                    .font(.system(size: layout.checkboxFontSize))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(file.url.lastPathComponent)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: layout.rowTitleFontSize, weight: .medium))
                         .foregroundStyle(Color.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(file.parentPath)
-                        .font(.system(size: 10))
+                        .font(.system(size: layout.rowSubtitleFontSize))
                         .foregroundStyle(Color.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -270,14 +274,14 @@ private struct DuplicateFileRow: View {
 
                 if file.isOriginal {
                     Text("keep")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: layout.keepBadgeFontSize, weight: .semibold))
                         .foregroundStyle(Color.green)
                 }
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 6)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: layout.rowCornerRadius, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
             )
             .contentShape(Rectangle())
@@ -364,6 +368,21 @@ private struct DuplicateFinderLayout {
     var buttonHorizontalPadding: CGFloat { 16 * scale }
     var buttonHeight: CGFloat { 30 * scale }
     var buttonCornerRadius: CGFloat { 7 * scale }
+
+    // Results body
+    var bodyFontSize: CGFloat { 13 * scale }
+    var captionFontSize: CGFloat { 11 * scale }
+    var rowTitleFontSize: CGFloat { 12 * scale }
+    var rowSubtitleFontSize: CGFloat { 10 * scale }
+    var groupTitleFontSize: CGFloat { 12 * scale }
+    var groupSizeFontSize: CGFloat { 11 * scale }
+    var groupInnerSpacing: CGFloat { 8 * scale }
+    var groupPadding: CGFloat { 12 * scale }
+    var groupCornerRadius: CGFloat { 12 * scale }
+    var rowSpacing: CGFloat { 10 * scale }
+    var rowCornerRadius: CGFloat { 8 * scale }
+    var checkboxFontSize: CGFloat { 14 * scale }
+    var keepBadgeFontSize: CGFloat { 10 * scale }
 }
 
 // MARK: - Controller
