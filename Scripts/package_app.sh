@@ -84,11 +84,22 @@ if [[ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_PUBLIC_ED_KEY" "$INFO_PLIST"
 fi
 
+# ---------------------------------------------------------------------------
+# Code signing
+#
 # Sign with a stable Developer ID identity so TCC grants (e.g. Full Disk Access)
 # persist across rebuilds and moves — they key on bundle id + team, not the
 # binary hash. The identity is never hard-coded here (this repo is public):
 # it comes from the CODESIGN_IDENTITY env var, else the local keychain's
 # Developer ID, else falls back to an ad-hoc signature.
+#
+# For PUBLIC DISTRIBUTION we sign with the Hardened Runtime + a secure timestamp,
+# which Apple requires for notarization. Apple deprecated `--deep`, so we sign
+# every nested executable INSIDE-OUT (deepest first, outer bundle last): yt-dlp,
+# then the Sparkle framework's XPC services / Updater / Autoupdate / framework,
+# then each helper .app, then the outer app. Each component is sealed before the
+# thing that contains it, or the outer signature is invalidated.
+# ---------------------------------------------------------------------------
 SIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]]; then
   # `|| true` so a no-match (e.g. CI runners with no Developer ID) doesn't trip
@@ -99,12 +110,71 @@ if [[ -z "$SIGN_IDENTITY" ]]; then
 fi
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
-codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+BASE_ENTITLEMENTS="$ROOT_DIR/Packaging/DMonte.entitlements"
+YTDLP_ENTITLEMENTS="$ROOT_DIR/Packaging/ytdlp.entitlements"
+
+# Hardened runtime + secure timestamp are only meaningful with a real identity;
+# an ad-hoc signature (used on CI runners with no Developer ID) can't carry them
+# and can't be notarized, so we sign ad-hoc-but-plain there for local testing.
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  HARDENED_OPTS=()
+  echo "No Developer ID found — signing ad-hoc (not hardened, cannot be notarized)"
+else
+  HARDENED_OPTS=(--options runtime --timestamp)
+fi
+
+# sign_one <path> <entitlements-or-empty>
+sign_one() {
+  local target="$1"
+  local entitlements="${2:-}"
+  local args=(--force --sign "$SIGN_IDENTITY")
+  if [[ ${#HARDENED_OPTS[@]} -gt 0 ]]; then
+    args+=("${HARDENED_OPTS[@]}")
+  fi
+  if [[ -n "$entitlements" ]]; then
+    args+=(--entitlements "$entitlements")
+  fi
+  codesign "${args[@]}" "$target"
+}
+
+# 1. Deepest first: the bundled yt-dlp child process (relaxed entitlements).
+if [[ -f "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" ]]; then
+  sign_one "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" "$YTDLP_ENTITLEMENTS"
+fi
+
+# 2. Sparkle's nested code, then the framework itself.
+SPARKLE_FW="$FRAMEWORKS_DIR/Sparkle.framework"
+if [[ -d "$SPARKLE_FW" ]]; then
+  SPARKLE_V="$SPARKLE_FW/Versions/B"
+  # XPC services and the updater apps each carry their own bundled binaries.
+  for xpc in "$SPARKLE_V/XPCServices/Downloader.xpc" "$SPARKLE_V/XPCServices/Installer.xpc"; do
+    [[ -d "$xpc" ]] && sign_one "$xpc"
+  done
+  [[ -e "$SPARKLE_V/Autoupdate" ]] && sign_one "$SPARKLE_V/Autoupdate"
+  if [[ -d "$SPARKLE_V/Updater.app" ]]; then
+    # Updater.app's own executable, then the .app wrapper.
+    sign_one "$SPARKLE_V/Updater.app/Contents/MacOS/Updater" 2>/dev/null || true
+    sign_one "$SPARKLE_V/Updater.app"
+  fi
+  sign_one "$SPARKLE_FW"
+fi
+
+# 3. Each helper .app (their executables are simple Swift binaries → base entitlements).
+for entry in "${HELPERS[@]}"; do
+  IFS='|' read -r exe app plist <<< "$entry"
+  sign_one "$HELPERS_DIR/$app/Contents/MacOS/$exe" "$BASE_ENTITLEMENTS"
+  sign_one "$HELPERS_DIR/$app" "$BASE_ENTITLEMENTS"
+done
+
+# 4. Finally the outer app (seals everything signed above).
+sign_one "$APP_DIR" "$BASE_ENTITLEMENTS"
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  echo "Signed ad-hoc (TCC grants will not persist across rebuilds)"
+  echo "Signed ad-hoc (TCC grants will not persist; not notarizable)"
 else
-  echo "Signed with local Developer ID identity"
+  echo "Signed with Developer ID + Hardened Runtime (notarization-ready)"
+  # Fail fast if the seal isn't valid for distribution.
+  codesign --verify --deep --strict --verbose=1 "$APP_DIR"
 fi
 
 echo "Created $APP_DIR"

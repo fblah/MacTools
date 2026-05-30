@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Base entitlements for the main toolbox and every Swift helper, applied under
+	  the Hardened Runtime. These tools shell out to system binaries and (for the
+	  Video Downloader) spawn a bundled yt-dlp child process, but none of them load
+	  third-party libraries into their own address space or use JIT, so the app
+	  stays maximally locked: no library-validation, JIT, or unsigned-memory holes.
+	  yt-dlp gets its own relaxed entitlements (ytdlp.entitlements) because it is a
+	  separate process, not code loaded into ours.
+	-->
+</dict>
+</plist>

@@ -15,6 +15,11 @@ DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/$TAG_NAME/$ZIP_NA
 
 "$ROOT_DIR/Scripts/package_app.sh"
 
+# Notarize + staple BEFORE zipping, so the Sparkle archive ships a stapled app
+# that Gatekeeper opens cleanly offline. notarize_app.sh no-ops (exit 0) when no
+# notary credentials are present, so local/CI-without-secrets builds still work.
+"$ROOT_DIR/Scripts/notarize_app.sh"
+
 rm -f "$ZIP_PATH" "$APPCAST_PATH"
 cd "$ROOT_DIR/dist"
 ditto -c -k --sequesterRsrc --keepParent "DMonte Toolbox.app" "$ZIP_NAME"

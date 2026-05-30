@@ -45,6 +45,35 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "$version" > VERSION
 
+      - name: Import Developer ID signing certificate
+        # Only runs when the signing secrets are configured; otherwise the build
+        # falls back to an ad-hoc signature (not notarizable, fine for testing).
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        shell: bash
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Write notary API key
+        if: ${{ secrets.NOTARY_KEY_P8 != '' }}
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        shell: bash
+        run: |
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary_key.p8"
+
       - name: Build release artifacts
         shell: bash
         env:
@@ -53,6 +82,12 @@ jobs:
           TAG_NAME: ${{ steps.version.outputs.tag }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
+          # Signing: explicit identity (empty → script falls back to keychain search / ad-hoc).
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          # Notarization via App Store Connect API key (all three required to notarize).
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
+          NOTARY_KEY_PATH: ${{ secrets.NOTARY_KEY_P8 != '' && format('{0}/notary_key.p8', runner.temp) || '' }}
         run: Scripts/make_release_artifacts.sh
 
       - name: Create GitHub release
