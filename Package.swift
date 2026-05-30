@@ -39,6 +39,50 @@ let package = Package(
         .executable(
             name: "DMonteClipboard",
             targets: ["DMonteClipboard"]
+        ),
+        .executable(
+            name: "DMonteDevTools",
+            targets: ["DMonteDevTools"]
+        ),
+        .executable(
+            name: "DMonteQR",
+            targets: ["DMonteQR"]
+        ),
+        .executable(
+            name: "DMonteKeepAwake",
+            targets: ["DMonteKeepAwake"]
+        ),
+        .executable(
+            name: "DMonteImageConverter",
+            targets: ["DMonteImageConverter"]
+        ),
+        .executable(
+            name: "DMonteMaintenance",
+            targets: ["DMonteMaintenance"]
+        ),
+        .executable(
+            name: "DMonteDuplicateFinder",
+            targets: ["DMonteDuplicateFinder"]
+        ),
+        .executable(
+            name: "DMonteAudioSwitcher",
+            targets: ["DMonteAudioSwitcher"]
+        ),
+        .executable(
+            name: "DMonteCalendar",
+            targets: ["DMonteCalendar"]
+        ),
+        .executable(
+            name: "DMonteColorPicker",
+            targets: ["DMonteColorPicker"]
+        ),
+        .executable(
+            name: "DMonteGrabText",
+            targets: ["DMonteGrabText"]
+        ),
+        .executable(
+            name: "DMonteFocusTimer",
+            targets: ["DMonteFocusTimer"]
         )
     ],
     dependencies: [
@@ -98,6 +142,83 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteClipboardApp"
+        ),
+        .executableTarget(
+            name: "DMonteDevTools",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteDevToolsApp"
+        ),
+        .executableTarget(
+            name: "DMonteQR",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteQRApp"
+        ),
+        .executableTarget(
+            name: "DMonteKeepAwake",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteKeepAwakeApp"
+        ),
+        .executableTarget(
+            name: "DMonteImageConverter",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteImageConverterApp"
+        ),
+        .executableTarget(
+            name: "DMonteMaintenance",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteMaintenanceApp"
+        ),
+        .executableTarget(
+            name: "DMonteDuplicateFinder",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteDuplicateFinderApp"
+        ),
+        .executableTarget(
+            name: "DMonteAudioSwitcher",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteAudioSwitcherApp"
+        ),
+        .executableTarget(
+            name: "DMonteCalendar",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteCalendarApp"
+        ),
+        .executableTarget(
+            name: "DMonteColorPicker",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteColorPickerApp"
+        ),
+        .executableTarget(
+            name: "DMonteGrabText",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteGrabTextApp"
+        ),
+        .executableTarget(
+            name: "DMonteFocusTimer",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteFocusTimerApp"
         ),
         .testTarget(
             name: "DMonteCoreTests",
