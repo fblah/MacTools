@@ -33,6 +33,7 @@ HELPERS=(
   "DMonteColorPicker|DMonte Color Picker.app|ColorPickerInfo.plist"
   "DMonteGrabText|DMonte Grab Text.app|GrabTextInfo.plist"
   "DMonteFocusTimer|DMonte Focus Timer.app|FocusTimerInfo.plist"
+  "DMonteWindowManager|DMonte Window Manager.app|WindowManagerInfo.plist"
 )
 
 stamp_version() {

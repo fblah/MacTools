@@ -83,6 +83,10 @@ let package = Package(
         .executable(
             name: "DMonteFocusTimer",
             targets: ["DMonteFocusTimer"]
+        ),
+        .executable(
+            name: "DMonteWindowManager",
+            targets: ["DMonteWindowManager"]
         )
     ],
     dependencies: [
@@ -219,6 +223,13 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteFocusTimerApp"
+        ),
+        .executableTarget(
+            name: "DMonteWindowManager",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteWindowManagerApp"
         ),
         .testTarget(
             name: "DMonteCoreTests",

@@ -185,8 +185,10 @@ public final class WindowManagerController: ObservableObject {
     // MARK: - Coordinate conversion (Cocoa bottom-left ↔ AX top-left)
 
     /// Converts a Cocoa global rect (origin bottom-left of the primary screen, y up) to AX/Quartz
-    /// global space (origin top-left of the primary screen, y down).
-    static func axRect(fromCocoa rect: CGRect) -> CGRect {
+    /// global space (origin top-left of the primary screen, y down). `nonisolated` so the pure
+    /// geometry is callable (and testable) off the main actor; it only reads the primary screen's
+    /// height, which is safe to touch from any thread.
+    nonisolated static func axRect(fromCocoa rect: CGRect) -> CGRect {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? rect.height
         return CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
     }
