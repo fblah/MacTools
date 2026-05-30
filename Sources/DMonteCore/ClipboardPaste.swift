@@ -44,12 +44,20 @@ public enum ClipboardPaste {
             pasteboard.writeObjects([item])
 
         case .file:
-            let urls = (entry.filePaths ?? []).map { URL(fileURLWithPath: $0) as NSURL }
             pasteboard.clearContents()
-            if urls.isEmpty {
-                pasteboard.setString(entry.text ?? "", forType: .string)
+            if let paths = entry.filePaths, !paths.isEmpty {
+                let items = paths.map { path in
+                    let item = NSPasteboardItem()
+                    item.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
+                    item.setString(ClipboardMonitor.bundleIdentifier, forType: sourceType)
+                    return item
+                }
+                pasteboard.writeObjects(items)
             } else {
-                pasteboard.writeObjects(urls)
+                let item = NSPasteboardItem()
+                item.setString(ClipboardMonitor.bundleIdentifier, forType: sourceType)
+                item.setString(entry.text ?? "", forType: .string)
+                pasteboard.writeObjects([item])
             }
 
         default:

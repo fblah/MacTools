@@ -11,8 +11,7 @@ public enum MaintenanceKit {
     // MARK: - Shell
 
     /// Runs an executable synchronously and returns its exit status plus the
-    /// combined trimmed stdout. stderr is captured and appended only when
-    /// stdout is empty so callers still get a useful message on failure.
+    /// combined trimmed stdout/stderr.
     ///
     /// This is intentionally synchronous and `nonisolated`; call it from a
     /// background `Task.detached` and marshal the result back to the main
@@ -22,10 +21,9 @@ public enum MaintenanceKit {
         process.executableURL = URL(fileURLWithPath: launchPath)
         process.arguments = args
 
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
 
         do {
             try process.run()
@@ -33,20 +31,12 @@ public enum MaintenanceKit {
             return (status: -1, output: "Failed to launch \(launchPath): \(error.localizedDescription)")
         }
 
-        // Read before waiting to avoid deadlocks on large output.
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain the single combined pipe while the process is still running so
+        // a noisy stderr stream cannot fill its pipe and block the child.
+        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let stdout = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let stderr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        let output: String
-        if !stdout.isEmpty {
-            output = stdout
-        } else {
-            output = stderr
-        }
+        let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         return (status: process.terminationStatus, output: output)
     }

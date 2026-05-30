@@ -48,14 +48,17 @@ public enum DuplicateFinderKit {
         // Phase 1: bucket by size. Only sizes with 2+ candidates can collide.
         var sizeBuckets: [UInt64: [URL]] = [:]
         for candidate in candidates {
+            if Task.isCancelled { return [] }
             sizeBuckets[candidate.size, default: []].append(candidate.url)
         }
 
         // Phase 2: hash only within multi-member size buckets.
         var groups: [DuplicateGroup] = []
         for (size, urls) in sizeBuckets where urls.count > 1 {
+            if Task.isCancelled { return [] }
             var hashBuckets: [String: [URL]] = [:]
             for url in urls {
+                if Task.isCancelled { return [] }
                 guard let digest = streamedSHA256(of: url) else { continue }
                 hashBuckets[digest, default: []].append(url)
             }
@@ -112,6 +115,7 @@ public enum DuplicateFinderKit {
         var candidates: [Candidate] = []
         var examined = 0
         for case let fileURL as URL in enumerator {
+            if Task.isCancelled { break }
             let values = try? fileURL.resourceValues(forKeys: Set(keys))
             // Skip symbolic links explicitly so we never hash the same bytes
             // twice or follow links pointing outside the tree.
@@ -140,6 +144,7 @@ public enum DuplicateFinderKit {
 
         var hasher = SHA256()
         while true {
+            if Task.isCancelled { return nil }
             let chunk: Data
             do {
                 chunk = try handle.read(upToCount: chunkSize) ?? Data()

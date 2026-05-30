@@ -265,6 +265,23 @@ public final class ImageConverterController: ObservableObject {
     }
 }
 
+private final class URLDropCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [URL] = []
+
+    func append(_ url: URL) {
+        lock.lock()
+        storage.append(url)
+        lock.unlock()
+    }
+
+    var urls: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 // MARK: - Window view
 
 public struct ImageConverterWindowView: View {
@@ -693,23 +710,20 @@ public struct ImageConverterWindowView: View {
 
     private func handleDrop(_ providers: [NSItemProvider]) {
         let group = DispatchGroup()
-        let lock = NSLock()
-        var collected: [URL] = []
+        let collected = URLDropCollector()
 
         for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             group.enter()
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 if let url {
-                    lock.lock()
                     collected.append(url)
-                    lock.unlock()
                 }
                 group.leave()
             }
         }
 
         group.notify(queue: .main) {
-            controller.addURLs(collected)
+            controller.addURLs(collected.urls)
         }
     }
 

@@ -378,6 +378,12 @@ final class DuplicateFinderController: ObservableObject {
     @Published var skipNotice: String?
 
     private var wastedBytes: UInt64 = 0
+    private var scanToken = UUID()
+    private var scanTask: Task<Void, Never>?
+
+    deinit {
+        scanTask?.cancel()
+    }
 
     var summaryText: String {
         guard !groups.isEmpty else { return "No duplicates found" }
@@ -417,6 +423,9 @@ final class DuplicateFinderController: ObservableObject {
     }
 
     func startScan(url: URL) {
+        scanTask?.cancel()
+        let token = UUID()
+        scanToken = token
         phase = .scanning
         scannedPathName = url.path
         progressText = "Scanning…"
@@ -424,21 +433,23 @@ final class DuplicateFinderController: ObservableObject {
         skipNotice = nil
 
         let target = url
-        Task.detached { [weak self] in
+        scanTask = Task.detached { [weak self] in
             // Capture the weak reference into an immutable local so the @Sendable
             // progress sink does not capture the task's mutable `self` binding.
             let controller = self
             let report: @Sendable (Int) -> Void = { count in
                 Task { @MainActor in
+                    guard controller?.scanToken == token else { return }
                     let fileWord = count == 1 ? "file" : "files"
                     controller?.progressText = "Scanned \(count) \(fileWord)…"
                 }
             }
             let found = DuplicateFinderKit.findDuplicates(in: target, progress: report)
+            guard !Task.isCancelled else { return }
             let waste = DuplicateFinderKit.wastedBytes(found)
             let mapped = found.map { DuplicateFinderGroup(group: $0) }
             await MainActor.run {
-                guard let self else { return }
+                guard let self, self.scanToken == token else { return }
                 self.groups = mapped
                 self.wastedBytes = waste
                 // Pre-select every copy except the kept original in each group.
@@ -448,6 +459,7 @@ final class DuplicateFinderController: ObservableObject {
                     }
                 )
                 self.phase = .results
+                self.scanTask = nil
             }
         }
     }

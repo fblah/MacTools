@@ -50,9 +50,3 @@ public enum GrabTextKit {
         }
     }
 }
-
-public extension DefaultsKey {
-    /// Whether recognized text is copied to the pasteboard automatically after a
-    /// successful grab. Defaults to `true` when unset.
-    static let grabTextCopyAutomatically = "tool.grabText.copyAutomatically"
-}

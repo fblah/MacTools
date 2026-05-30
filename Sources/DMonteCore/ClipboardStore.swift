@@ -168,6 +168,8 @@ public final class ClipboardStore: ObservableObject {
                 hasher.update(data: Data(string.utf8))
             } else if let rtf = captured.rtfData {
                 hasher.update(data: rtf)
+            } else if let html = captured.htmlData {
+                hasher.update(data: html)
             }
             return hasher.finalize().map { String(format: "%02x", $0) }.joined()
         }.value
