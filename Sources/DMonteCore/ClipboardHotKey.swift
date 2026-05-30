@@ -18,7 +18,11 @@ public final class GlobalHotKey {
         )
     }
 
-    public init?(keyCode: UInt32, modifiers: UInt32, handler: @escaping @Sendable () -> Void) {
+    /// - Parameter id: A per-process-unique identifier. Carbon keys each registration by
+    ///   `(signature, id)`, so a process that registers more than one hotkey (e.g. Window
+    ///   Manager's snap shortcuts) must pass a distinct `id` per key or later registrations
+    ///   silently fail. The default of `1` keeps existing single-hotkey callers unchanged.
+    public init?(keyCode: UInt32, modifiers: UInt32, id: UInt32 = 1, handler: @escaping @Sendable () -> Void) {
         self.handler = handler
 
         var eventType = EventTypeSpec(
@@ -43,7 +47,7 @@ public final class GlobalHotKey {
 
         guard installStatus == noErr else { return nil }
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x434C_4950 /* 'CLIP' */), id: 1)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x434C_4950 /* 'CLIP' */), id: id)
         let registerStatus = RegisterEventHotKey(
             keyCode,
             modifiers,
