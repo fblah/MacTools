@@ -448,18 +448,21 @@ final class DuplicateFinderController: ObservableObject {
             guard !Task.isCancelled else { return }
             let waste = DuplicateFinderKit.wastedBytes(found)
             let mapped = found.map { DuplicateFinderGroup(group: $0) }
+            // Pre-select every copy except the kept original in each group.
+            let selection = Set(mapped.flatMap { group in
+                group.files.filter { !$0.isOriginal }.map(\.url)
+            })
+            // Use the Sendable @MainActor `controller` reference (not the task-isolated `self`)
+            // for the main-actor hop, so nothing task-isolated is sent across the boundary —
+            // the release build's stricter single-module concurrency check rejects capturing
+            // `self` here even though the debug build accepts it.
             await MainActor.run {
-                guard let self, self.scanToken == token else { return }
-                self.groups = mapped
-                self.wastedBytes = waste
-                // Pre-select every copy except the kept original in each group.
-                self.selectedURLs = Set(
-                    mapped.flatMap { group in
-                        group.files.filter { !$0.isOriginal }.map(\.url)
-                    }
-                )
-                self.phase = .results
-                self.scanTask = nil
+                guard let controller, controller.scanToken == token else { return }
+                controller.groups = mapped
+                controller.wastedBytes = waste
+                controller.selectedURLs = selection
+                controller.phase = .results
+                controller.scanTask = nil
             }
         }
     }
