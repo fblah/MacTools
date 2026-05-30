@@ -479,6 +479,9 @@ final class DuplicateFinderController: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         Task.detached { [weak self] in
+            // Sendable @MainActor reference; calling an isolated method on it never sends
+            // task-isolated `self` across the boundary (which the release build rejects).
+            let controller = self
             var trashed: Set<URL> = []
             var failures: [String] = []
             let fileManager = FileManager.default
@@ -492,9 +495,7 @@ final class DuplicateFinderController: ObservableObject {
             }
             let removed = trashed
             let skipped = failures
-            await MainActor.run {
-                self?.applyDeletion(removed: removed, failures: skipped)
-            }
+            await controller?.applyDeletion(removed: removed, failures: skipped)
         }
     }
 
