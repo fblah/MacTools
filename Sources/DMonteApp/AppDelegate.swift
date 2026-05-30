@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             self?.toggleToolboxPopover(from: statusView)
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
         toolboxStatusView = statusView
     }
 

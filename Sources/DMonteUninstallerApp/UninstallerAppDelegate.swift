@@ -192,7 +192,7 @@ final class UninstallerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDel
 
             self?.showWindow(relativeTo: statusView)
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
     }
 
     private func configureWindowShowNotifications() {

@@ -192,7 +192,7 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
         statusView.onClick = { [weak self] in
             self?.togglePanel()
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
         self.statusView = statusView
     }
 

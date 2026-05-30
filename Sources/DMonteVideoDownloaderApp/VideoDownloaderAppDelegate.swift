@@ -184,7 +184,7 @@ final class VideoDownloaderAppDelegate: NSObject, NSApplicationDelegate, NSWindo
         statusView.onClick = { [weak self, weak statusView] in
             self?.showWindow(relativeTo: statusView)
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
     }
 
     private func configureWindowShowNotifications() {

@@ -108,9 +108,7 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
         view.target = self
         view.action = #selector(togglePanel)
 
-        // Use the custom control as the status item's view directly (matches the
-        // Clipboard tool) so click handling lives entirely in the control.
-        item.view = view
+        StatusBarButtonContent.install(view, in: item)
 
         statusItem = item
         statusView = view

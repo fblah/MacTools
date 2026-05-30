@@ -91,7 +91,7 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         statusView.onClick = { [weak self] in
             self?.togglePopover()
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
         self.statusView = statusView
         updateStatusTitle(monitor.snapshot)
     }

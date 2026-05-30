@@ -182,7 +182,7 @@ final class DevToolsAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         statusView.onClick = { [weak self, weak statusView] in
             self?.showWindow(relativeTo: statusView)
         }
-        item.view = statusView
+        StatusBarButtonContent.install(statusView, in: item)
     }
 
     private func configureWindowShowNotifications() {
