@@ -66,19 +66,22 @@ jobs:
         run: |
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          # No auto-lock, so the keychain stays usable for the later build step.
+          security set-keychain-settings "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          # -A grants all apps access to the key (plus -T for codesign explicitly).
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
-            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            -P "$MACOS_CERT_PASSWORD" -A -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          # Put our keychain FIRST on the user search list (keeping the existing ones).
+          # Make our keychain the DEFAULT and put it first on the search list.
+          # codesign resolves an identity-by-name against the default keychain, so
+          # this is what actually lets the build step find the identity.
+          security default-keychain -s "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
-          # Disable auto-lock so the keychain stays unlocked for the later build step.
-          security set-keychain-settings "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12"
-          # Fail loudly here (not deep in the build) if the identity isn't actually usable.
-          security find-identity -v -p codesigning "$KEYCHAIN"
+          # Fail loudly here (not deep in the build) if the identity isn't usable.
+          security find-identity -v -p codesigning
 
       - name: Write notary API key
         if: ${{ env.NOTARY_KEY_P8 != '' }}
@@ -106,7 +109,10 @@ jobs:
           if [[ -n "$CODESIGN_IDENTITY" ]]; then
             KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security default-keychain -s "$KEYCHAIN"
             security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+            # Sanity-check the identity is resolvable before the long build.
+            security find-identity -v -p codesigning
           fi
           Scripts/make_release_artifacts.sh
 
