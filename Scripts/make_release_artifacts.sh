@@ -18,7 +18,8 @@ DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/$TAG_NAME/$ZIP_NA
 # Notarize + staple BEFORE zipping, so the Sparkle archive ships a stapled app
 # that Gatekeeper opens cleanly offline. notarize_app.sh no-ops (exit 0) when no
 # notary credentials are present, so local/CI-without-secrets builds still work.
-"$ROOT_DIR/Scripts/notarize_app.sh"
+# Invoked via `bash` so a missing executable bit can never block the pipeline.
+bash "$ROOT_DIR/Scripts/notarize_app.sh"
 
 rm -f "$ZIP_PATH" "$APPCAST_PATH"
 cd "$ROOT_DIR/dist"
