@@ -80,8 +80,15 @@ jobs:
           security default-keychain -s "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
           rm -f "$RUNNER_TEMP/cert.p12"
-          # Fail loudly here (not deep in the build) if the identity isn't usable.
+          # Fail loudly here (not 60s deep in the build) if the uploaded cert is not a
+          # "Developer ID Application" cert — that's the only kind notarization accepts
+          # for direct distribution (Apple Distribution / Development certs won't work).
           security find-identity -v -p codesigning
+          if ! security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
+            echo "::error::MACOS_CERT_P12 does not contain a 'Developer ID Application' certificate." \
+                 "Re-export that specific cert from Keychain Access and update the secret." >&2
+            exit 1
+          fi
 
       - name: Write notary API key
         if: ${{ env.NOTARY_KEY_P8 != '' }}
