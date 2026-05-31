@@ -15,12 +15,6 @@ private final class KeyableToolboxPanel: NSPanel {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let openHelpersDefaultsKey = "com.havokentity.mactools.toolbox.openHelpers"
-
-    // The launcher is driven entirely by the shared ToolboxCatalog, so a new tool needs no
-    // wiring here — just a catalog entry plus its helper target.
-    private static var tools: [ToolboxTool] { ToolboxCatalog.all }
-
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
@@ -30,24 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var toolboxPanel: NSPanel?
     private var defaultsSink: AnyCancellable?
     private var eventMonitor: Any?
-    private var helpersPendingRelaunch: Set<String> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
         configureToolboxPopover()
         configureToolboxStatusItem()
         configureToolboxShowNotifications()
-        observeHelperTerminations()
-        restoreHelpersAfterRestart()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         DistributedNotificationCenter.default().removeObserver(self)
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
-        // A deliberate quit must NOT trigger a restore on the next launch — only an
-        // unexpected kill (e.g. TCC restarting us to apply a permission grant) should.
-        // The kill path skips this method, so the saved set survives only then.
-        saveOpenHelpers([])
         defaultsSink = nil
 
         if let eventMonitor {
@@ -148,10 +134,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func launchHelper(_ tool: ToolboxTool) {
-        // Remember that this tool is open so we can restore it if macOS kills and
-        // relaunches the Toolbox (e.g. when applying a Full Disk Access grant).
-        persistHelperOpen(tool.bundleID)
-
         let runningApplications = NSRunningApplication.runningApplications(withBundleIdentifier: tool.bundleID)
 
         guard runningApplications.isEmpty else {
@@ -179,105 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            FileManager.default.fileExists(atPath: helperExecutableURL.path) {
             _ = try? Process.run(helperExecutableURL, arguments: tool.arguments)
         }
-    }
-
-    private func terminateHelper(bundleIdentifier: String) {
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).forEach { $0.terminate() }
-    }
-
-    // MARK: - Helper session restore
-
-    private func observeHelperTerminations() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(helperAppDidTerminate(_:)),
-            name: NSWorkspace.didTerminateApplicationNotification,
-            object: nil
-        )
-    }
-
-    @objc private func helperAppDidTerminate(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              let bundleId = app.bundleIdentifier,
-              Self.tools.contains(where: { $0.bundleID == bundleId }) else {
-            return
-        }
-
-        if helpersPendingRelaunch.remove(bundleId) != nil {
-            // We terminated this orphaned instance as part of a restart-restore;
-            // bring it back fresh so it runs under the relaunched Toolbox (and thus
-            // inherits any newly granted permission).
-            relaunchHelper(bundleId: bundleId)
-            return
-        }
-
-        // Otherwise the user closed the tool themselves — stop tracking it.
-        persistHelperClosed(bundleId)
-    }
-
-    private func restoreHelpersAfterRestart() {
-        let saved = loadOpenHelpers()
-        guard !saved.isEmpty else {
-            return
-        }
-
-        for bundleId in saved {
-            let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
-            if running.isEmpty {
-                // Nothing left to clean up (kill took it too) — just reopen.
-                relaunchHelper(bundleId: bundleId)
-            } else {
-                // Close the orphan first; the termination observer reopens it fresh.
-                helpersPendingRelaunch.insert(bundleId)
-                running.forEach { $0.terminate() }
-            }
-        }
-
-        if !helpersPendingRelaunch.isEmpty {
-            scheduleOrphanForceTerminate()
-        }
-    }
-
-    private func scheduleOrphanForceTerminate() {
-        // If a helper ignores the polite terminate (e.g. a modal sheet), force it
-        // after a grace period; the termination observer still handles the reopen.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            guard let self else { return }
-            for bundleId in self.helpersPendingRelaunch {
-                NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).forEach { $0.forceTerminate() }
-            }
-        }
-    }
-
-    private func relaunchHelper(bundleId: String) {
-        guard let tool = Self.tools.first(where: { $0.bundleID == bundleId }) else {
-            return
-        }
-
-        launchHelper(tool)
-    }
-
-    private func loadOpenHelpers() -> Set<String> {
-        let stored = UserDefaults.standard.array(forKey: Self.openHelpersDefaultsKey) as? [String] ?? []
-        return Set(stored)
-    }
-
-    private func saveOpenHelpers(_ helpers: Set<String>) {
-        UserDefaults.standard.set(Array(helpers), forKey: Self.openHelpersDefaultsKey)
-    }
-
-    private func persistHelperOpen(_ bundleId: String) {
-        var set = loadOpenHelpers()
-        guard !set.contains(bundleId) else { return }
-        set.insert(bundleId)
-        saveOpenHelpers(set)
-    }
-
-    private func persistHelperClosed(_ bundleId: String) {
-        var set = loadOpenHelpers()
-        guard set.contains(bundleId) else { return }
-        set.remove(bundleId)
-        saveOpenHelpers(set)
     }
 
     private func bundledHelperURL(appName: String) -> URL? {
