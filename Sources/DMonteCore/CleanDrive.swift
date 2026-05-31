@@ -352,7 +352,14 @@ public struct CleanDriveWindowView: View {
     @State private var isCleaning = false
     @State private var cleaningTotalBytes: UInt64 = 0
     @State private var cleanedBytes: UInt64 = 0
+    /// The fraction actually drawn by the bar. Decoupled from `progressFraction` so the drain
+    /// is rate-limited: a fast clean still animates a fluid sweep rather than snapping empty.
+    @State private var displayedFraction: Double = 0
     @State private var message = "Scanning..."
+
+    /// Slowest the bar may drain: a full bar takes at least this long to empty, so even an
+    /// instant delete shows a visible sweep. Smaller moves scale down proportionally.
+    private static let fullDrainSeconds: Double = 1.1
     @State private var isShowingSettings = false
     private let layout = CleanDriveLayout.current
 
@@ -389,6 +396,14 @@ public struct CleanDriveWindowView: View {
         .frostedPanel(cornerRadius: 18)
         .task {
             await reload()
+        }
+        .onChange(of: progressFraction) { _, newValue in
+            // While idle, keep the bar in sync with the selection. During cleaning the
+            // drain is driven explicitly (rate-limited) by the clean loop.
+            guard !isCleaning else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                displayedFraction = newValue
+            }
         }
     }
 
@@ -457,8 +472,7 @@ public struct CleanDriveWindowView: View {
                             endPoint: .trailing
                         )
                     )
-                    .frame(width: proxy.size.width * progressFraction)
-                    .animation(.easeOut(duration: 0.3), value: progressFraction)
+                    .frame(width: proxy.size.width * displayedFraction)
             }
         }
         .frame(height: layout.progressHeight)
@@ -566,6 +580,19 @@ public struct CleanDriveWindowView: View {
         return max(0.04, min(Double(selectedSize) / Double(totalSize), 1))
     }
 
+    /// Moves the drawn bar toward `progressFraction`, capping the drain speed so a full bar
+    /// always takes at least `fullDrainSeconds` to empty. Shorter moves scale down to keep a
+    /// constant visual speed; growth (e.g. re-selecting) snaps quickly.
+    private func animateBar(to target: Double) {
+        let distance = abs(target - displayedFraction)
+        // Rate-limit only when the bar is draining (target below current); growth is snappy.
+        let isDraining = target < displayedFraction
+        let duration = isDraining ? max(0.12, distance * Self.fullDrainSeconds) : 0.2
+        withAnimation(.easeInOut(duration: duration)) {
+            displayedFraction = target
+        }
+    }
+
     private func toggle(_ id: CleanDriveCategoryID) {
         if selectedCategories.contains(id) {
             selectedCategories.remove(id)
@@ -589,12 +616,19 @@ public struct CleanDriveWindowView: View {
         items = scannedItems
         isScanning = false
         updateMessage()
+        // Sync the idle bar to the freshly-scanned selection (post-clean this lands at the
+        // new, smaller selection without re-triggering the drain animation).
+        if !isCleaning {
+            displayedFraction = progressFraction
+        }
     }
 
     private func startCleaning() {
         isCleaning = true
         cleaningTotalBytes = selectedSize
         cleanedBytes = 0
+        // Start the bar full, then let it drain at the capped speed.
+        displayedFraction = 1
         message = "Cleaning..."
         let selected = selectedCategories
 
@@ -605,6 +639,7 @@ public struct CleanDriveWindowView: View {
                 switch event {
                 case let .progress(bytes, currentItem):
                     cleanedBytes = bytes
+                    animateBar(to: progressFraction)
                     if !currentItem.isEmpty {
                         message = "Cleaning \(currentItem)..."
                     }
@@ -612,13 +647,22 @@ public struct CleanDriveWindowView: View {
                     result = finished
                     // Snap the bar fully empty even if measured bytes drift from the scan.
                     cleanedBytes = cleaningTotalBytes
+                    animateBar(to: 0)
                 }
             }
+
+            // Let the final drain animation play out so an instant clean still sweeps
+            // visibly to empty before we rescan and reset.
+            try? await Task.sleep(nanoseconds: UInt64(Self.fullDrainSeconds * 1_000_000_000))
 
             // Rescan while still in the cleaning state so the drained bar stays empty
             // instead of flashing back to the pre-clean fill during the rescan.
             await reload()
             isCleaning = false
+            // Now that cleaning is done, settle the idle bar onto the post-clean selection.
+            withAnimation(.easeOut(duration: 0.25)) {
+                displayedFraction = progressFraction
+            }
             message = summaryMessage(for: result)
 
             if !result.skipped.isEmpty {

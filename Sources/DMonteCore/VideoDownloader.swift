@@ -134,6 +134,9 @@ final class VideoDownloaderModel: ObservableObject {
         var copyText: String
         var state: DownloadState
         var retryCount: Int
+        /// Folder the file is saved into, captured at launch so a completed row can
+        /// reveal it in Finder.
+        var outputDirectory: String?
     }
 
     @Published var urlText = ""
@@ -270,7 +273,8 @@ final class VideoDownloaderModel: ObservableObject {
             progressDetail: "Waiting",
             copyText: url,
             state: .queued,
-            retryCount: 0
+            retryCount: 0,
+            outputDirectory: preferences.saveDirectoryPath
         )
 
         downloads.append(item)
@@ -280,6 +284,16 @@ final class VideoDownloaderModel: ObservableObject {
     }
 
     /// Re-queues a failed download from scratch. Triggered by tapping a failed row.
+    /// Reveals a completed download's folder in Finder. Falls back to the configured save
+    /// directory if the item didn't capture one. No-op if the folder no longer exists.
+    func revealInFinder(id: UUID) {
+        guard let item = downloads.first(where: { $0.id == id }) else { return }
+        let path = item.outputDirectory ?? VideoDownloaderPreferences.current.saveDirectoryPath
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     func retryDownload(id: UUID) {
         guard let index = downloads.firstIndex(where: { $0.id == id }),
               downloads[index].state == .failed else {
@@ -1075,6 +1089,8 @@ public struct VideoDownloaderWindowView: View {
                         NSPasteboard.general.setString(item.copyText, forType: .string)
                     } onRetry: {
                         model.retryDownload(id: item.id)
+                    } onReveal: {
+                        model.revealInFinder(id: item.id)
                     }
                 }
             }
@@ -1123,13 +1139,31 @@ private struct DownloadQueueRow: View {
     var layout: VideoDownloaderLayout
     var onCopy: () -> Void
     var onRetry: () -> Void
+    var onReveal: () -> Void
 
     private var isFailed: Bool {
         item.state == .failed
     }
 
+    private var isComplete: Bool {
+        item.state == .complete
+    }
+
+    /// Failed → retry, complete → reveal the download folder in Finder, otherwise → copy.
+    private var primaryAction: () -> Void {
+        if isFailed { return onRetry }
+        if isComplete { return onReveal }
+        return onCopy
+    }
+
+    private var rowHelp: String {
+        if isFailed { return "Click to retry this download" }
+        if isComplete { return "Click to show in Finder" }
+        return "Copy download message"
+    }
+
     var body: some View {
-        Button(action: isFailed ? onRetry : onCopy) {
+        Button(action: primaryAction) {
             HStack(spacing: layout.queueRowHorizontalSpacing) {
                 Image(systemName: iconName)
                     .font(.system(size: layout.queueIconSize, weight: .bold))
@@ -1182,7 +1216,7 @@ private struct DownloadQueueRow: View {
             .contentShape(RoundedRectangle(cornerRadius: layout.queueRowCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(isFailed ? "Click to retry this download" : "Copy download message")
+        .help(rowHelp)
         .contextMenu {
             Button("Copy Details") { onCopy() }
             if isFailed {
