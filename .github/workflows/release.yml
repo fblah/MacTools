@@ -72,8 +72,13 @@ jobs:
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
             -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Put our keychain FIRST on the user search list (keeping the existing ones).
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          # Disable auto-lock so the keychain stays unlocked for the later build step.
+          security set-keychain-settings "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/cert.p12"
+          # Fail loudly here (not deep in the build) if the identity isn't actually usable.
+          security find-identity -v -p codesigning "$KEYCHAIN"
 
       - name: Write notary API key
         if: ${{ env.NOTARY_KEY_P8 != '' }}
@@ -92,8 +97,18 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           TAG_NAME: ${{ steps.version.outputs.tag }}
           GITHUB_TOKEN: ${{ github.token }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
           NOTARY_KEY_PATH: ${{ env.NOTARY_KEY_P8 != '' && format('{0}/notary_key.p8', runner.temp) || '' }}
-        run: Scripts/make_release_artifacts.sh
+        run: |
+          # Re-unlock the signing keychain in THIS shell — keychain unlock state does
+          # not carry across steps, so codesign would otherwise fail with
+          # "no identity found" even though the cert is imported.
+          if [[ -n "$CODESIGN_IDENTITY" ]]; then
+            KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+            security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          fi
+          Scripts/make_release_artifacts.sh
 
       - name: Create GitHub release
         env:
