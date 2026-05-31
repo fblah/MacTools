@@ -17,119 +17,11 @@ private final class KeyablePanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-/// The menu-bar tray button for Keep Awake. The drawn glyph reflects the active state: a filled
-/// cup when awake, an outline cup when idle.
-private final class KeepAwakeStatusView: NSControl {
-    static let statusWidth: CGFloat = 22
-
-    var onClick: (() -> Void)?
-
-    /// Redraws the glyph whenever the awake state changes.
-    var isAwake = false {
-        didSet {
-            guard isAwake != oldValue else { return }
-            updateImage()
-            needsDisplay = true
-        }
-    }
-
-    private var image: NSImage
-    private let highlightLayer = CALayer()
-    private var trackingArea: NSTrackingArea?
-
-    init() {
-        image = Self.symbol(awake: false)
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness))
-        wantsLayer = true
-        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
-        highlightLayer.cornerRadius = 6
-        highlightLayer.cornerCurve = .continuous
-        highlightLayer.masksToBounds = true
-        highlightLayer.isHidden = true
-        layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "Keep Awake"
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private static func symbol(awake: Bool) -> NSImage {
-        let name = awake ? "cup.and.saucer.fill" : "cup.and.saucer"
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Keep Awake") ?? NSImage()
-        image.isTemplate = true
-        return image
-    }
-
-    private func updateImage() {
-        image = Self.symbol(awake: isAwake)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        let glyphSize = NSSize(width: 16, height: 16)
-        let glyphRect = NSRect(
-            x: bounds.midX - glyphSize.width / 2,
-            y: bounds.midY - glyphSize.height / 2,
-            width: glyphSize.width,
-            height: glyphSize.height
-        )
-        NSColor.labelColor.set()
-        image.draw(in: glyphRect, from: .zero, operation: .sourceOver, fraction: isAwake ? 1.0 : 0.85)
-    }
-
-    override func layout() {
-        super.layout()
-        highlightLayer.frame = bounds.insetBy(dx: 1, dy: 3)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        highlightLayer.isHidden = false
-        onClick?()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        highlightLayer.isHidden = !isMouseInside
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { highlightLayer.isHidden = false }
-    override func mouseExited(with event: NSEvent) { highlightLayer.isHidden = true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    private var isMouseInside: Bool {
-        guard let window else { return false }
-        let mouseInWindow = window.mouseLocationOutsideOfEventStream
-        let mouseInView = convert(mouseInWindow, from: nil)
-        return bounds.contains(mouseInView)
-    }
-}
-
 @MainActor
 final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
     private let controller = KeepAwakeController()
 
     private var statusItem: NSStatusItem?
-    private weak var statusView: KeepAwakeStatusView?
     private var panel: NSPanel?
     private var clickMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
@@ -154,7 +46,6 @@ final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
             self.statusItem = nil
-            self.statusView = nil
         }
     }
 
@@ -191,16 +82,38 @@ final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: KeepAwakeStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
 
-        let statusView = KeepAwakeStatusView()
-        statusView.isAwake = controller.isActive
-        statusView.onClick = { [weak self] in
-            self?.togglePanel()
-        }
-        StatusBarButtonContent.install(statusView, in: item)
-        self.statusView = statusView
+        StatusBarButtonContent.install(
+            image: Self.statusIcon(awake: false),
+            in: item,
+            toolTip: "Keep Awake",
+            target: self,
+            action: #selector(statusItemClicked)
+        )
+
+        // Reflect the controller's current state immediately (e.g. relaunch while already awake).
+        updateStatusIcon()
+    }
+
+    @objc private func statusItemClicked() {
+        togglePanel()
+    }
+
+    /// The two-state tray glyph: a filled cup when awake, an outline cup when idle. Forced to
+    /// template so AppKit tints it adaptive white and gives it the native rollover highlight.
+    private static func statusIcon(awake: Bool) -> NSImage {
+        let name = awake ? "cup.and.saucer.fill" : "cup.and.saucer"
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Keep Awake") ?? NSImage()
+        image.isTemplate = true
+        return image
+    }
+
+    /// Swaps the status button's image to match the controller's active state. Driven by the
+    /// `$isActive` Combine sink so the tray glyph stays in sync with awake/idle transitions.
+    private func updateStatusIcon() {
+        statusItem?.button?.image = Self.statusIcon(awake: controller.isActive)
     }
 
     private func configureShowNotification() {
@@ -216,8 +129,8 @@ final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
     private func observeControllerState() {
         controller.$isActive
             .receive(on: RunLoop.main)
-            .sink { [weak self] active in
-                self?.statusView?.isAwake = active
+            .sink { [weak self] _ in
+                self?.updateStatusIcon()
             }
             .store(in: &cancellables)
     }
@@ -255,7 +168,7 @@ final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func panelFrame(for size: NSSize) -> NSRect {
-        guard let statusView, let window = statusView.window, let screen = window.screen ?? NSScreen.main else {
+        guard let button = statusItem?.button, let window = button.window, let screen = window.screen ?? NSScreen.main else {
             let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             return NSRect(
                 x: visibleFrame.midX - size.width / 2,
@@ -265,7 +178,7 @@ final class KeepAwakeAppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let viewFrameInWindow = statusView.convert(statusView.bounds, to: nil)
+        let viewFrameInWindow = button.convert(button.bounds, to: nil)
         let anchorFrame = window.convertToScreen(viewFrameInWindow)
         let visibleFrame = screen.visibleFrame
         let x = min(

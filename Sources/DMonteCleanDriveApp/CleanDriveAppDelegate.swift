@@ -8,104 +8,6 @@ private final class KeyableWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
-private final class CleanDriveStatusView: NSControl {
-    static let statusWidth: CGFloat = 22
-
-    var onClick: (() -> Void)?
-
-    private let image: NSImage
-    private let highlightLayer = CALayer()
-    private var trackingArea: NSTrackingArea?
-
-    init() {
-        image = NSImage(systemSymbolName: "paintbrush.pointed", accessibilityDescription: "Clean Drive") ?? NSImage()
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness))
-        wantsLayer = true
-        image.isTemplate = true
-        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
-        highlightLayer.cornerRadius = 6
-        highlightLayer.cornerCurve = .continuous
-        highlightLayer.masksToBounds = true
-        highlightLayer.isHidden = true
-        layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "Clean Drive"
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        NSColor.labelColor.set()
-        let imageSize = NSSize(width: 15, height: 15)
-        let imageRect = NSRect(
-            x: bounds.midX - imageSize.width / 2,
-            y: bounds.midY - imageSize.height / 2,
-            width: imageSize.width,
-            height: imageSize.height
-        )
-        image.draw(in: imageRect)
-    }
-
-    override func layout() {
-        super.layout()
-        highlightLayer.frame = bounds.insetBy(dx: 1, dy: 3)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        highlightLayer.isHidden = false
-        onClick?()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        highlightLayer.isHidden = !isMouseInside
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        highlightLayer.isHidden = false
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        highlightLayer.isHidden = true
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    private var isMouseInside: Bool {
-        guard let window else {
-            return false
-        }
-
-        let mouseInWindow = window.mouseLocationOutsideOfEventStream
-        let mouseInView = convert(mouseInWindow, from: nil)
-        return bounds.contains(mouseInView)
-    }
-}
-
 @MainActor
 final class CleanDriveAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
@@ -176,14 +78,21 @@ final class CleanDriveAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: CleanDriveStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
 
-        let statusView = CleanDriveStatusView()
-        statusView.onClick = { [weak self, weak statusView] in
-            self?.showWindow(relativeTo: statusView)
-        }
-        StatusBarButtonContent.install(statusView, in: item)
+        let icon = NSImage(systemSymbolName: "paintbrush.pointed", accessibilityDescription: "Clean Drive") ?? NSImage()
+        StatusBarButtonContent.install(
+            image: icon,
+            in: item,
+            toolTip: "Clean Drive",
+            target: self,
+            action: #selector(statusItemClicked)
+        )
+    }
+
+    @objc private func statusItemClicked() {
+        showWindow(relativeTo: statusItem?.button)
     }
 
     private func configureWindowShowNotifications() {

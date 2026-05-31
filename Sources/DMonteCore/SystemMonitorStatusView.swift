@@ -48,11 +48,28 @@ public final class SystemMonitorStatusView: NSControl {
 
     public override func mouseDown(with event: NSEvent) {
         isHighlighted = true
+        // The view is hosted as a subview of the status item's NSStatusBarButton. Forward the
+        // click to that button's target/action (set by the app delegate) so the popover toggles,
+        // while preserving the legacy `onClick` closure if a caller still wires one up.
         onClick?()
+        if let button = enclosingStatusBarButton(), let action = button.action {
+            NSApp.sendAction(action, to: button.target, from: button)
+        }
     }
 
     public override func mouseUp(with event: NSEvent) {
         isHighlighted = false
+    }
+
+    private func enclosingStatusBarButton() -> NSStatusBarButton? {
+        var view: NSView? = superview
+        while let current = view {
+            if let button = current as? NSStatusBarButton {
+                return button
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     public override func layout() {

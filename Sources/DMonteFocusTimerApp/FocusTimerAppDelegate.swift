@@ -17,134 +17,18 @@ private final class KeyablePanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-/// The menu-bar tray button for Focus Timer. While a session is running (or paused mid-session) it
-/// draws the remaining time as text (e.g. "24:13"); when idle it draws the timer glyph. The width is
-/// fixed so MM:SS fits comfortably.
-private final class FocusTimerStatusView: NSControl {
-    /// Wide enough to hold "MM:SS" plus padding; the status item uses this fixed width.
-    static let statusWidth: CGFloat = 52
-
-    var onClick: (() -> Void)?
-
-    /// The text to draw, or `nil` to draw the idle glyph instead.
-    var timeText: String? {
-        didSet {
-            guard timeText != oldValue else { return }
-            needsDisplay = true
-        }
-    }
-
-    private let glyph: NSImage
-    private let highlightLayer = CALayer()
-    private var trackingArea: NSTrackingArea?
-
-    override init(frame frameRect: NSRect) {
-        let image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Focus Timer") ?? NSImage()
-        image.isTemplate = true
-        glyph = image
-        super.init(frame: frameRect)
-        wantsLayer = true
-        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
-        highlightLayer.cornerRadius = 6
-        highlightLayer.cornerCurve = .continuous
-        highlightLayer.masksToBounds = true
-        highlightLayer.isHidden = true
-        layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "Focus Timer"
-    }
-
-    convenience init() {
-        self.init(frame: NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness))
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        if let timeText {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraph
-            ]
-            let attributed = NSAttributedString(string: timeText, attributes: attributes)
-            let textSize = attributed.size()
-            let textRect = NSRect(
-                x: bounds.minX,
-                y: bounds.midY - textSize.height / 2,
-                width: bounds.width,
-                height: textSize.height
-            )
-            attributed.draw(in: textRect)
-        } else {
-            let glyphSize = NSSize(width: 16, height: 16)
-            let glyphRect = NSRect(
-                x: bounds.midX - glyphSize.width / 2,
-                y: bounds.midY - glyphSize.height / 2,
-                width: glyphSize.width,
-                height: glyphSize.height
-            )
-            NSColor.labelColor.set()
-            glyph.draw(in: glyphRect, from: .zero, operation: .sourceOver, fraction: 0.9)
-        }
-    }
-
-    override func layout() {
-        super.layout()
-        highlightLayer.frame = bounds.insetBy(dx: 1, dy: 3)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        highlightLayer.isHidden = false
-        onClick?()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        highlightLayer.isHidden = !isMouseInside
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { highlightLayer.isHidden = false }
-    override func mouseExited(with event: NSEvent) { highlightLayer.isHidden = true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    private var isMouseInside: Bool {
-        guard let window else { return false }
-        let mouseInWindow = window.mouseLocationOutsideOfEventStream
-        let mouseInView = convert(mouseInWindow, from: nil)
-        return bounds.contains(mouseInView)
-    }
-}
-
 @MainActor
 final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
     private let controller = FocusTimerController()
 
     private var statusItem: NSStatusItem?
-    private weak var statusView: FocusTimerStatusView?
+    /// Idle glyph shown on the status button when no session is running; the button shows the
+    /// MM:SS countdown as its title while active.
+    private let idleIcon: NSImage = {
+        let image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Focus Timer") ?? NSImage()
+        image.isTemplate = true
+        return image
+    }()
     private var panel: NSPanel?
     private var clickMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
@@ -177,7 +61,6 @@ final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
             self.statusItem = nil
-            self.statusView = nil
         }
     }
 
@@ -214,16 +97,22 @@ final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: FocusTimerStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
 
-        let statusView = FocusTimerStatusView()
-        statusView.onClick = { [weak self] in
-            self?.togglePanel()
-        }
-        StatusBarButtonContent.install(statusView, in: item)
-        self.statusView = statusView
+        StatusBarButtonContent.install(
+            title: nil,
+            idleImage: idleIcon,
+            in: item,
+            toolTip: "Focus Timer",
+            target: self,
+            action: #selector(statusItemClicked)
+        )
         refreshStatusTitle()
+    }
+
+    @objc private func statusItemClicked() {
+        togglePanel()
     }
 
     private func configureShowNotification() {
@@ -261,12 +150,11 @@ final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
     /// Draws the remaining time when a session is active (running or paused mid-phase), otherwise the
     /// idle glyph.
     private func refreshStatusTitle() {
-        guard let statusView else { return }
-        if controller.isRunning || controller.progress > 0 {
-            statusView.timeText = FocusTimerPopoverView.formatTime(controller.remaining)
-        } else {
-            statusView.timeText = nil
-        }
+        guard let statusItem else { return }
+        let title: String? = (controller.isRunning || controller.progress > 0)
+            ? FocusTimerPopoverView.formatTime(controller.remaining)
+            : nil
+        StatusBarButtonContent.updateTitle(title, idleImage: idleIcon, in: statusItem)
     }
 
     @objc private func showPanelFromNotification(_ notification: Notification) {
@@ -368,7 +256,7 @@ final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func panelFrame(for size: NSSize) -> NSRect {
-        guard let statusView, let window = statusView.window, let screen = window.screen ?? NSScreen.main else {
+        guard let statusButton = statusItem?.button, let window = statusButton.window, let screen = window.screen ?? NSScreen.main else {
             let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             return NSRect(
                 x: visibleFrame.midX - size.width / 2,
@@ -378,7 +266,7 @@ final class FocusTimerAppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let viewFrameInWindow = statusView.convert(statusView.bounds, to: nil)
+        let viewFrameInWindow = statusButton.convert(statusButton.bounds, to: nil)
         let anchorFrame = window.convertToScreen(viewFrameInWindow)
         let visibleFrame = screen.visibleFrame
         let x = min(

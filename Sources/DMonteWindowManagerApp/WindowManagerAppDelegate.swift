@@ -16,98 +16,11 @@ private final class KeyablePanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-/// The menu-bar tray button for Window Manager.
-private final class WindowManagerStatusView: NSControl {
-    static let statusWidth: CGFloat = 22
-
-    var onClick: (() -> Void)?
-
-    private let image: NSImage
-    private let highlightLayer = CALayer()
-    private var trackingArea: NSTrackingArea?
-
-    init() {
-        image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "Window Manager") ?? NSImage()
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness))
-        wantsLayer = true
-        image.isTemplate = true
-        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
-        highlightLayer.cornerRadius = 6
-        highlightLayer.cornerCurve = .continuous
-        highlightLayer.masksToBounds = true
-        highlightLayer.isHidden = true
-        layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "Window Manager"
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        let glyphSize = NSSize(width: 16, height: 16)
-        let glyphRect = NSRect(
-            x: bounds.midX - glyphSize.width / 2,
-            y: bounds.midY - glyphSize.height / 2,
-            width: glyphSize.width,
-            height: glyphSize.height
-        )
-        NSColor.labelColor.set()
-        image.draw(in: glyphRect, from: .zero, operation: .sourceOver, fraction: 1.0)
-    }
-
-    override func layout() {
-        super.layout()
-        highlightLayer.frame = bounds.insetBy(dx: 1, dy: 3)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        highlightLayer.isHidden = false
-        onClick?()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        highlightLayer.isHidden = !isMouseInside
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { highlightLayer.isHidden = false }
-    override func mouseExited(with event: NSEvent) { highlightLayer.isHidden = true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    private var isMouseInside: Bool {
-        guard let window else { return false }
-        let mouseInWindow = window.mouseLocationOutsideOfEventStream
-        let mouseInView = convert(mouseInWindow, from: nil)
-        return bounds.contains(mouseInView)
-    }
-}
-
 @MainActor
 final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     private let controller = WindowManagerController()
 
     private var statusItem: NSStatusItem?
-    private weak var statusView: WindowManagerStatusView?
     private var panel: NSPanel?
     private var clickMonitor: Any?
 
@@ -134,7 +47,6 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
             self.statusItem = nil
-            self.statusView = nil
         }
     }
 
@@ -171,15 +83,15 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: WindowManagerStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
 
-        let statusView = WindowManagerStatusView()
-        statusView.onClick = { [weak self] in
-            self?.togglePanel()
-        }
-        StatusBarButtonContent.install(statusView, in: item)
-        self.statusView = statusView
+        let icon = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "Window Manager") ?? NSImage()
+        StatusBarButtonContent.install(image: icon, in: item, toolTip: "Window Manager", target: self, action: #selector(statusItemClicked))
+    }
+
+    @objc private func statusItemClicked() {
+        togglePanel()
     }
 
     private func configureShowNotification() {
@@ -227,7 +139,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func panelFrame(for size: NSSize) -> NSRect {
-        guard let statusView, let window = statusView.window, let screen = window.screen ?? NSScreen.main else {
+        guard let statusButton = statusItem?.button, let window = statusButton.window, let screen = window.screen ?? NSScreen.main else {
             let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             return NSRect(
                 x: visibleFrame.midX - size.width / 2,
@@ -237,7 +149,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let viewFrameInWindow = statusView.convert(statusView.bounds, to: nil)
+        let viewFrameInWindow = statusButton.convert(statusButton.bounds, to: nil)
         let anchorFrame = window.convertToScreen(viewFrameInWindow)
         let visibleFrame = screen.visibleFrame
         let x = min(

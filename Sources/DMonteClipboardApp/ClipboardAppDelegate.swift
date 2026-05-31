@@ -9,111 +9,11 @@ private final class KeyablePanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-/// The menu-bar tray button for the clipboard manager.
-private final class ClipboardStatusView: NSControl {
-    static let statusWidth: CGFloat = 22
-
-    var onClick: (() -> Void)?
-
-    private let image: NSImage
-    private let highlightLayer = CALayer()
-    private var trackingArea: NSTrackingArea?
-
-    init() {
-        image = NSImage(systemSymbolName: "doc.on.clipboard.fill", accessibilityDescription: "Clipboard") ?? NSImage()
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.statusWidth, height: NSStatusBar.system.thickness))
-        wantsLayer = true
-        image.isTemplate = true
-        highlightLayer.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
-        highlightLayer.cornerRadius = 6
-        highlightLayer.cornerCurve = .continuous
-        highlightLayer.masksToBounds = true
-        highlightLayer.isHidden = true
-        layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "Clipboard"
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        // Inverted look: a solid rounded chip with the clipboard glyph knocked out of it.
-        let chipSide: CGFloat = 16
-        let chipRect = NSRect(
-            x: bounds.midX - chipSide / 2,
-            y: bounds.midY - chipSide / 2,
-            width: chipSide,
-            height: chipSide
-        )
-        NSColor.labelColor.setFill()
-        NSBezierPath(roundedRect: chipRect, xRadius: 4.5, yRadius: 4.5).fill()
-
-        let glyphSize = NSSize(width: 10.5, height: 10.5)
-        let glyphRect = NSRect(
-            x: bounds.midX - glyphSize.width / 2,
-            y: bounds.midY - glyphSize.height / 2,
-            width: glyphSize.width,
-            height: glyphSize.height
-        )
-        // The simple draw(in:) ignores the context's compositing op, so pass it explicitly
-        // to knock the clipboard glyph out of the chip.
-        image.draw(in: glyphRect, from: .zero, operation: .destinationOut, fraction: 1.0)
-    }
-
-    override func layout() {
-        super.layout()
-        highlightLayer.frame = bounds.insetBy(dx: 1, dy: 3)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        highlightLayer.isHidden = false
-        onClick?()
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        highlightLayer.isHidden = !isMouseInside
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { highlightLayer.isHidden = false }
-    override func mouseExited(with event: NSEvent) { highlightLayer.isHidden = true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    private var isMouseInside: Bool {
-        guard let window else { return false }
-        let mouseInWindow = window.mouseLocationOutsideOfEventStream
-        let mouseInView = convert(mouseInWindow, from: nil)
-        return bounds.contains(mouseInView)
-    }
-}
-
 @MainActor
 final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
     private let controller = ClipboardController()
 
     private var statusItem: NSStatusItem?
-    private weak var statusView: ClipboardStatusView?
     private var panel: NSPanel?
     private var hotKey: GlobalHotKey?
     private var clickMonitor: Any?
@@ -148,7 +48,6 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
             self.statusItem = nil
-            self.statusView = nil
         }
     }
 
@@ -185,15 +84,15 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: ClipboardStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
 
-        let statusView = ClipboardStatusView()
-        statusView.onClick = { [weak self] in
-            self?.togglePanel()
-        }
-        StatusBarButtonContent.install(statusView, in: item)
-        self.statusView = statusView
+        let icon = NSImage(systemSymbolName: "doc.on.clipboard.fill", accessibilityDescription: "Clipboard") ?? NSImage()
+        StatusBarButtonContent.install(image: icon, in: item, toolTip: "Clipboard", target: self, action: #selector(statusItemClicked))
+    }
+
+    @objc private func statusItemClicked() {
+        togglePanel()
     }
 
     private func configureShowNotification() {
@@ -269,7 +168,7 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func panelFrame(for size: NSSize) -> NSRect {
-        guard let statusView, let window = statusView.window, let screen = window.screen ?? NSScreen.main else {
+        guard let button = statusItem?.button, let window = button.window, let screen = window.screen ?? NSScreen.main else {
             let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             return NSRect(
                 x: visibleFrame.midX - size.width / 2,
@@ -279,7 +178,7 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let viewFrameInWindow = statusView.convert(statusView.bounds, to: nil)
+        let viewFrameInWindow = button.convert(button.bounds, to: nil)
         let anchorFrame = window.convertToScreen(viewFrameInWindow)
         let visibleFrame = screen.visibleFrame
         let x = min(

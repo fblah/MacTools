@@ -27,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         userDriverDelegate: nil
     )
     private var toolboxStatusItem: NSStatusItem?
-    private weak var toolboxStatusView: ToolboxStatusView?
     private var toolboxPanel: NSPanel?
     private var defaultsSink: AnyCancellable?
     private var eventMonitor: Any?
@@ -62,7 +61,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let toolboxStatusItem {
             NSStatusBar.system.removeStatusItem(toolboxStatusItem)
             self.toolboxStatusItem = nil
-            self.toolboxStatusView = nil
         }
     }
 
@@ -95,19 +93,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let item = NSStatusBar.system.statusItem(withLength: ToolboxStatusView.statusWidth)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         toolboxStatusItem = item
 
-        let statusView = ToolboxStatusView(image: Self.toolboxStatusImage())
-        statusView.onClick = { [weak self, weak statusView] in
-            guard let statusView else {
-                return
-            }
+        StatusBarButtonContent.install(
+            image: Self.toolboxStatusImage(),
+            in: item,
+            toolTip: "D'Monte's Toolbox",
+            target: self,
+            action: #selector(toolboxStatusItemClicked)
+        )
+    }
 
-            self?.toggleToolboxPopover(from: statusView)
-        }
-        StatusBarButtonContent.install(statusView, in: item)
-        toolboxStatusView = statusView
+    @objc private func toolboxStatusItemClicked() {
+        guard let button = toolboxStatusItem?.button else { return }
+        toggleToolboxPopover(from: button)
     }
 
     private func toolboxRootView(popoverSize: NSSize) -> some View {
@@ -135,11 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showToolboxFromNotification(_ notification: Notification) {
-        guard let statusView = toolboxStatusView else {
+        guard let button = toolboxStatusItem?.button else {
             return
         }
 
-        showToolboxPopover(from: statusView)
+        showToolboxPopover(from: button)
     }
 
     private func openTool(_ tool: ToolboxTool) {
@@ -355,7 +355,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let toolboxStatusItem {
             NSStatusBar.system.removeStatusItem(toolboxStatusItem)
             self.toolboxStatusItem = nil
-            self.toolboxStatusView = nil
         }
 
         NSApp.terminate(nil)

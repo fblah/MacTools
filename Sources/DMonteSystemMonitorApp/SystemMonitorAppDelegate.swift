@@ -83,17 +83,35 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         let showsIcon = AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorShowsTrayIcon)
+        // A concrete (non-variable) length keeps AppKit from treating the button as empty and
+        // culling it when the menu bar gets crowded — the disappearing-icon bug that drove the
+        // migration off the old custom-subview install path for the other 17 tools.
         let item = NSStatusBar.system.statusItem(withLength: SystemMonitorStatusView.statusWidth(showsIcon: showsIcon))
         statusItem = item
 
+        // System Monitor is the hard case: the tray content is a live multi-metric strip, not a
+        // single icon/title. Keep the rich custom view, but host it inside the status item's own
+        // button (the AppKit-managed content the menu bar won't drop) and let the button's
+        // target/action handle the click instead of the view's onClick closure.
         let statusView = SystemMonitorStatusView()
         statusView.applyShowsIcon(showsIcon)
-        statusView.onClick = { [weak self] in
-            self?.togglePopover()
-        }
-        StatusBarButtonContent.install(statusView, in: item)
         self.statusView = statusView
+
+        if let button = item.button {
+            button.toolTip = "System Monitor"
+            button.target = self
+            button.action = #selector(statusItemClicked)
+
+            statusView.frame = button.bounds
+            statusView.autoresizingMask = [.width, .height]
+            button.addSubview(statusView)
+        }
+
         updateStatusTitle(monitor.snapshot)
+    }
+
+    @objc private func statusItemClicked() {
+        togglePopover()
     }
 
     private func configureObservers() {

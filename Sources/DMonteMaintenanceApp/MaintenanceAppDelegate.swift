@@ -2,56 +2,6 @@ import AppKit
 import SwiftUI
 import DMonteCore
 
-// MARK: - Status item control
-
-/// A small NSControl that draws the menu-bar icon and forwards clicks to the
-/// delegate. Using a custom control (rather than the button's default target)
-/// keeps behaviour identical to the Clipboard tool.
-final class MaintenanceStatusView: NSControl {
-
-    static let statusWidth: CGFloat = 24
-
-    private let glyph: NSImage
-
-    override init(frame frameRect: NSRect) {
-        glyph = NSImage(systemSymbolName: "wrench.and.screwdriver.fill",
-                        accessibilityDescription: "Maintenance") ?? NSImage()
-        super.init(frame: frameRect)
-        glyph.isTemplate = true
-        toolTip = "Maintenance"
-    }
-
-    required init?(coder: NSCoder) {
-        glyph = NSImage(systemSymbolName: "wrench.and.screwdriver.fill",
-                        accessibilityDescription: "Maintenance") ?? NSImage()
-        super.init(coder: coder)
-        glyph.isTemplate = true
-        toolTip = "Maintenance"
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        let glyphSize = NSSize(width: 15, height: 15)
-        let rect = NSRect(
-            x: (bounds.width - glyphSize.width) / 2,
-            y: (bounds.height - glyphSize.height) / 2,
-            width: glyphSize.width,
-            height: glyphSize.height
-        )
-        // Template images tint to the menu-bar foreground colour automatically.
-        glyph.draw(in: rect)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        // Fire on mouse-down for snappy menu-bar feel.
-        if let action, let target {
-            NSApp.sendAction(action, to: target, from: self)
-        }
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-}
-
 // MARK: - Keyable panel
 
 /// A borderless, non-activating panel that can still become key so SwiftUI
@@ -73,7 +23,6 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
         Notification.Name("com.havokentity.mactools.maintenance.showWindow")
 
     private var statusItem: NSStatusItem?
-    private var statusView: MaintenanceStatusView?
     private var panel: KeyablePanel?
     private var outsideClickMonitor: Any?
 
@@ -99,19 +48,16 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Status item
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: MaintenanceStatusView.statusWidth)
-        let view = MaintenanceStatusView(
-            frame: NSRect(x: 0, y: 0,
-                          width: MaintenanceStatusView.statusWidth,
-                          height: NSStatusBar.system.thickness)
-        )
-        view.target = self
-        view.action = #selector(togglePanel)
-
-        StatusBarButtonContent.install(view, in: item)
-
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
-        statusView = view
+
+        let icon = NSImage(systemSymbolName: "wrench.and.screwdriver.fill",
+                           accessibilityDescription: "Maintenance") ?? NSImage()
+        StatusBarButtonContent.install(image: icon, in: item, toolTip: "Maintenance", target: self, action: #selector(statusItemClicked))
+    }
+
+    @objc private func statusItemClicked() {
+        togglePanel()
     }
 
     // MARK: Show-window observer
@@ -194,8 +140,8 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
         panel.layoutIfNeeded()
         let size = panel.frame.size
 
-        guard let statusView,
-              let anchorWindow = statusView.window,
+        guard let anchorView = statusItem?.button,
+              let anchorWindow = anchorView.window,
               let screen = anchorWindow.screen ?? NSScreen.main else {
             // Fallback: top-right of the main screen.
             if let screen = NSScreen.main {
@@ -206,7 +152,7 @@ final class MaintenanceAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let viewRectInWindow = statusView.convert(statusView.bounds, to: nil)
+        let viewRectInWindow = anchorView.convert(anchorView.bounds, to: nil)
         let anchorOnScreen = anchorWindow.convertToScreen(viewRectInWindow)
 
         let visibleFrame = screen.visibleFrame
