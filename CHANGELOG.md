@@ -1,0 +1,99 @@
+# Changelog
+
+All notable changes to D'Monte's Toolbox are documented here. This project
+adheres to [Semantic Versioning](https://semver.org) and the
+[Keep a Changelog](https://keepachangelog.com) format.
+
+## [0.7.0] — 2026-06-01
+
+First public release. 🎉
+
+### Added
+- **Public distribution**: releases are now signed with Developer ID under the
+  Hardened Runtime and **notarized + stapled by Apple** in CI, so downloads open
+  without Gatekeeper warnings.
+- A version label in the Toolbox settings sheet (sourced from the bundle).
+
+The suite now ships **18 tools**: System Monitor, Clipboard History, Clean Drive,
+Disk Usage Analyzer, Duplicate Finder, Uninstall Apps, Download Video, Image
+Converter, Grab Text (OCR), QR Studio, Color Picker, Window Manager, Audio
+Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
+
+### Changed
+- Notarization pipeline: inside‑out signing of every nested helper, the Sparkle
+  framework's XPC services / updater, and the bundled yt‑dlp, each with the
+  correct entitlements. `-rc` tags publish as prereleases that bypass the
+  auto‑update feed.
+
+## [0.6.1] — 2026-05-30
+
+### Fixed
+- **Third‑party review follow‑ups.** Audio Switcher and Maintenance now respect
+  the display/menu‑bar scale and no longer cast a square shadow halo; Duplicate
+  Finder's result rows scale with the window.
+- **Security hardening.** Clipboard history is stored with owner‑only
+  permissions (`0700`/`0600`); the bundled yt‑dlp download is verified against
+  its official SHA‑256 checksum.
+
+## [0.6.0] — 2026-05-30
+
+### Added
+- **Window Manager** — snap the focused window to halves, thirds, two‑thirds,
+  corners, maximize, and center, with global ⌃⌥ shortcuts via the Accessibility
+  API and multi‑display awareness.
+
+### Changed
+- Toolbox wiring is now driven by a single data‑driven `ToolboxCatalog`
+  (dashboard, launcher, and packaging in lockstep); `package_app.sh` became
+  table‑driven.
+- Replaced the deprecated `NSStatusItem.view` with a shared status‑bar helper,
+  clearing the macOS 10.14 deprecation warnings.
+
+### Fixed
+- Code‑review fixes: a Maintenance shell‑pipe deadlock, a Duplicate Finder scan
+  race, Clipboard HTML‑only hashing and file‑paste self‑capture, and a release
+  build data race.
+
+## [0.5.0] — 2026-05-29
+
+### Added
+- **Eleven new tools**: Dev Tools, QR Studio, Keep Awake, Image Converter,
+  Maintenance, Color Picker, Grab Text (OCR), Focus Timer, Duplicate Finder,
+  Audio Switcher, and Calendar — each with a tested, pure‑logic core.
+
+## [0.4.0] — 2026-05-29
+
+### Added
+- **Clipboard History** — searchable clipboard with text/rich‑text/link/image/
+  file capture, pinning, quick‑paste (⌘1–9), paste‑as‑plain, and a ⇧⌘V global
+  hotkey. Honors password‑manager/transient markers.
+
+### Fixed
+- The Toolbox search field is now focusable and clickable.
+
+## [0.3.0] — 2026-05-29
+
+### Changed
+- **Clean Drive** now permanently frees space (instead of moving to Trash),
+  runs asynchronously with a draining progress gauge, reports why anything was
+  skipped, and tracks the macOS display scale.
+
+## [0.2.0] — earlier
+
+### Added
+- Disk Usage Analyzer, Uninstall Apps, and Download Video tools; the toolbox
+  dashboard and Sparkle‑based auto‑updates.
+
+## [0.1.x] — initial
+
+### Added
+- The menu bar toolbox shell and the first tool, System Monitor (live CPU,
+  memory, disk, network, and temperature metrics).
+
+[0.7.0]: https://github.com/havokentity/MacTools/releases/tag/v0.7.0
+[0.6.1]: https://github.com/havokentity/MacTools/releases/tag/v0.6.1
+[0.6.0]: https://github.com/havokentity/MacTools/releases/tag/v0.6.0
+[0.5.0]: https://github.com/havokentity/MacTools/releases/tag/v0.5.0
+[0.4.0]: https://github.com/havokentity/MacTools/releases/tag/v0.4.0
+[0.3.0]: https://github.com/havokentity/MacTools/releases/tag/v0.3.0
+[0.2.0]: https://github.com/havokentity/MacTools/releases/tag/v0.2.0
