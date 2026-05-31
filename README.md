@@ -74,13 +74,13 @@ open "dist/DMonte Toolbox.app"
 Releases are fully automated. Tagging `vX.Y.Z` triggers CI to build, hardened‑sign, **notarize and staple** with Apple, publish a GitHub Release, and update the Sparkle appcast.
 
 ```bash
-Scripts/bump_version.sh 0.7.1
-git commit -am "Release 0.7.1"
-git tag v0.7.1
-git push origin main v0.7.1
+Scripts/bump_version.sh 0.7.2
+git commit -am "Release 0.7.2"
+git tag v0.7.2
+git push origin main v0.7.2
 ```
 
-A `-rc` suffix (e.g. `v0.7.1-rc1`) publishes as a prerelease, so it's testable without reaching the auto‑update feed. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
+A `-rc` suffix (e.g. `v0.7.2-rc1`) publishes as a prerelease, so it's testable without reaching the auto‑update feed. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
 
 The auto‑update feed:
 

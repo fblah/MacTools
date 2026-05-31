@@ -4,6 +4,27 @@ All notable changes to D'Monte's Toolbox are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.7.1] — 2026-06-01
+
+### Fixed
+- **Menu bar icons no longer disappear.** Each tool's icon was hosted as a custom
+  subview on the status button, leaving the button itself empty — so when the
+  menu bar got crowded macOS culled the "empty" items. All icons now use the
+  status item's native button, which AppKit keeps put.
+- **Toolbox icon styling.** The hand‑drawn toolbox glyph rendered solid black;
+  it's now an adaptive template (semi‑transparent white on dark menu bars) that
+  highlights on hover, consistent with every other tool.
+- **Launching the Toolbox no longer reopens previously‑open tools.** The
+  session‑restore behaviour misfired because a menu‑bar app rarely gets a clean
+  termination, so the saved set persisted and tools reopened on nearly every
+  launch. Removed entirely — tools open only when you click them.
+
+### Changed
+- **Video Downloader**: clicking a completed download now reveals its folder in
+  Finder (failed → retry, complete → reveal, otherwise → copy).
+- **Clean Drive**: the progress bar's drain is rate‑limited so a fast/instant
+  clean still shows a fluid sweep instead of snapping to empty.
+
 ## [0.7.0] — 2026-06-01
 
 First public release. 🎉
@@ -90,6 +111,7 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar toolbox shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
+[0.7.1]: https://github.com/havokentity/MacTools/releases/tag/v0.7.1
 [0.7.0]: https://github.com/havokentity/MacTools/releases/tag/v0.7.0
 [0.6.1]: https://github.com/havokentity/MacTools/releases/tag/v0.6.1
 [0.6.0]: https://github.com/havokentity/MacTools/releases/tag/v0.6.0
