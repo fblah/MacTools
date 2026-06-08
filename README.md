@@ -94,4 +94,4 @@ A single `DMonteCore` library holds each tool's pure, testable logic plus its Sw
 
 ## License
 
-MIT
+GPL-3.0-only
