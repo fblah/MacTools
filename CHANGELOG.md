@@ -4,6 +4,21 @@ All notable changes to D'Monte's Toolbox are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.0] — 2026-06-09
+
+### Added
+- **Volume Mixer** — a new separate menu bar tool for per-app volume control
+  using CoreAudio process taps. It lists active and inactive apps, groups helper
+  processes under their parent app, supports mute, pinning, smart pinning,
+  search, ignored-app management, and per-app output routing.
+
+### Changed
+- Volume Mixer restores saved app volume and routing state as soon as its tray
+  helper starts, without needing to open the popover first.
+- Volume Mixer is 200px taller, giving the app and ignored lists more room.
+- Volume Mixer refresh work now runs off the main thread, slider persistence is
+  debounced, and the real-time render path uses Accelerate for lower overhead.
+
 ## [0.7.1] — 2026-06-01
 
 ### Fixed
@@ -111,6 +126,7 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar toolbox shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
+[0.8.0]: https://github.com/havokentity/MacTools/releases/tag/v0.8.0
 [0.7.1]: https://github.com/havokentity/MacTools/releases/tag/v0.7.1
 [0.7.0]: https://github.com/havokentity/MacTools/releases/tag/v0.7.0
 [0.6.1]: https://github.com/havokentity/MacTools/releases/tag/v0.6.1
