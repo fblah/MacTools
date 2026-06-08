@@ -72,4 +72,59 @@ final class AudioSwitcherKitTests: XCTestCase {
         XCTAssertNotEqual(a, c)
         XCTAssertEqual(a.id, AudioDeviceID(42))
     }
+
+    func testAppVolumeTargetClampsGain() {
+        XCTAssertEqual(AppVolumeTarget.clampGain(-0.5), 0)
+        XCTAssertEqual(AppVolumeTarget.clampGain(0.4), 0.4)
+        XCTAssertEqual(AppVolumeTarget.clampGain(2), 1)
+    }
+
+    func testAppVolumeTargetUsesBundleIDAsStableIdentity() {
+        let target = AppVolumeTarget(
+            processID: 123,
+            audioObjectID: 456,
+            bundleIdentifier: "com.example.Player",
+            displayName: "Player",
+            isRunningOutput: true,
+            gain: 0.7
+        )
+        XCTAssertEqual(target.id, "com.example.Player")
+        XCTAssertEqual(target.stableKey, "com.example.Player")
+    }
+
+    func testAppVolumeTargetFallsBackToPIDIdentity() {
+        let target = AppVolumeTarget(
+            processID: 123,
+            audioObjectID: 456,
+            bundleIdentifier: nil,
+            displayName: "Process 123",
+            isRunningOutput: true,
+            gain: 0.7
+        )
+        XCTAssertEqual(target.id, "pid:123")
+    }
+
+    func testAppVolumeGainPersistenceClampsValues() {
+        let suiteName = "AppVolumeMixerTests-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+        }
+        let target = AppVolumeTarget(
+            processID: 123,
+            audioObjectID: 456,
+            bundleIdentifier: "com.example.Player",
+            displayName: "Player",
+            isRunningOutput: true,
+            gain: 1
+        )
+
+        AppVolumeMixerKit.setGain(2, for: target, defaults: suite)
+
+        XCTAssertEqual(AppVolumeMixerKit.gain(for: target, defaults: suite), 1)
+        XCTAssertEqual(
+            AppVolumeMixerKit.persistedGains(defaults: suite)["com.example.Player"],
+            1
+        )
+    }
 }

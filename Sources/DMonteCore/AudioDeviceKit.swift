@@ -53,6 +53,11 @@ public enum AudioDeviceKit {
         allDevices().filter { $0.hasInput }
     }
 
+    /// Persistent CoreAudio UID for a device, or `nil` if unavailable.
+    public static func uid(for deviceID: AudioDeviceID) -> String? {
+        deviceUID(deviceID)
+    }
+
     // MARK: - Defaults (getters)
 
     /// The current default output device, or `nil` if none is set / available.
@@ -195,6 +200,23 @@ public enum AudioDeviceKit {
         }
         guard status == noErr else { return nil }
         let result = name as String
+        return result.isEmpty ? nil : result
+    }
+
+    private static func deviceUID(_ deviceID: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+        var uid: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        let status = withUnsafeMutablePointer(to: &uid) { ptr -> OSStatus in
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, ptr)
+        }
+        guard status == noErr else { return nil }
+        let result = uid as String
         return result.isEmpty ? nil : result
     }
 

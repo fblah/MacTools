@@ -2,8 +2,8 @@ import Foundation
 import Darwin
 
 /// Registers the clipboard helper as a per-user LaunchAgent so it starts at login and keeps
-/// capturing copies. Mirrors `SystemMonitorLoginItem`. A clipboard manager is only useful while
-/// running, so this defaults on after first launch (see the app delegate).
+/// capturing copies. Mirrors `SystemMonitorLoginItem`; disabled by default so opening the Toolbox
+/// does not spawn helpers until the user opts in.
 @MainActor
 public enum ClipboardLoginItem {
     private static let label = "com.havokentity.mactools.clipboard"
@@ -18,6 +18,7 @@ public enum ClipboardLoginItem {
 
     public static func refreshIfEnabled() {
         guard AppDefaults.shared.bool(forKey: DefaultsKey.clipboardOpenAtLogin) else {
+            uninstall()
             return
         }
 

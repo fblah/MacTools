@@ -154,9 +154,19 @@ private struct ToolboxDashboard: View {
 private struct DashboardView: View {
     var searchText: String
     var onOpenTool: (ToolboxTool) -> Void
+    @State private var recentToolIDs = ToolboxRecentTools.ids(in: AppDefaults.shared)
 
     private var visibleTools: [ToolboxTool] {
         filtered(ToolboxCatalog.all)
+    }
+
+    private var recentTools: [ToolboxTool] {
+        let toolsByID = Dictionary(uniqueKeysWithValues: ToolboxCatalog.all.map { ($0.id, $0) })
+        return recentToolIDs.compactMap { toolsByID[$0] }
+    }
+
+    private var showsRecents: Bool {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !recentTools.isEmpty
     }
 
     var body: some View {
@@ -164,7 +174,16 @@ private struct DashboardView: View {
             if visibleTools.isEmpty {
                 EmptyToolsView()
             } else {
-                ToolGrid(tools: visibleTools, onOpenTool: onOpenTool)
+                if showsRecents {
+                    ToolSection(title: "Recently Used", tools: recentTools, onOpenTool: onOpenTool)
+
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    ToolSection(title: "All Apps", tools: visibleTools, onOpenTool: onOpenTool)
+                } else {
+                    ToolGrid(tools: visibleTools, onOpenTool: onOpenTool)
+                }
             }
 
             Spacer(minLength: 0)
@@ -173,6 +192,10 @@ private struct DashboardView: View {
         .padding(.top, 16)
         .padding(.bottom, 18)
         .frame(minHeight: 330, alignment: .topLeading)
+        .onAppear(perform: refreshRecents)
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            refreshRecents()
+        }
     }
 
     private func filtered(_ tools: [ToolboxTool]) -> [ToolboxTool] {
@@ -183,6 +206,26 @@ private struct DashboardView: View {
         }
 
         return tools.filter { $0.title.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func refreshRecents() {
+        recentToolIDs = ToolboxRecentTools.ids(in: AppDefaults.shared)
+    }
+}
+
+private struct ToolSection: View {
+    var title: String
+    var tools: [ToolboxTool]
+    var onOpenTool: (ToolboxTool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+
+            ToolGrid(tools: tools, onOpenTool: onOpenTool)
+        }
     }
 }
 

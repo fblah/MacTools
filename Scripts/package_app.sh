@@ -29,6 +29,7 @@ HELPERS=(
   "DMonteMaintenance|DMonte Maintenance.app|MaintenanceInfo.plist"
   "DMonteDuplicateFinder|DMonte Duplicate Finder.app|DuplicateFinderInfo.plist"
   "DMonteAudioSwitcher|DMonte Audio Switcher.app|AudioSwitcherInfo.plist"
+  "DMonteVolumeMixer|DMonte Volume Mixer.app|VolumeMixerInfo.plist"
   "DMonteCalendar|DMonte Calendar.app|CalendarInfo.plist"
   "DMonteColorPicker|DMonte Color Picker.app|ColorPickerInfo.plist"
   "DMonteGrabText|DMonte Grab Text.app|GrabTextInfo.plist"
@@ -111,6 +112,7 @@ fi
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 BASE_ENTITLEMENTS="$ROOT_DIR/Packaging/DMonte.entitlements"
+VOLUMEMIXER_ENTITLEMENTS="$ROOT_DIR/Packaging/VolumeMixer.entitlements"
 YTDLP_ENTITLEMENTS="$ROOT_DIR/Packaging/ytdlp.entitlements"
 
 # Hardened runtime + secure timestamp are only meaningful with a real identity;
@@ -162,8 +164,12 @@ fi
 # 3. Each helper .app (their executables are simple Swift binaries → base entitlements).
 for entry in "${HELPERS[@]}"; do
   IFS='|' read -r exe app plist <<< "$entry"
-  sign_one "$HELPERS_DIR/$app/Contents/MacOS/$exe" "$BASE_ENTITLEMENTS"
-  sign_one "$HELPERS_DIR/$app" "$BASE_ENTITLEMENTS"
+  helper_entitlements="$BASE_ENTITLEMENTS"
+  if [[ "$exe" == "DMonteVolumeMixer" ]]; then
+    helper_entitlements="$VOLUMEMIXER_ENTITLEMENTS"
+  fi
+  sign_one "$HELPERS_DIR/$app/Contents/MacOS/$exe" "$helper_entitlements"
+  sign_one "$HELPERS_DIR/$app" "$helper_entitlements"
 done
 
 # 4. Finally the outer app (seals everything signed above).

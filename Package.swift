@@ -69,6 +69,10 @@ let package = Package(
             targets: ["DMonteAudioSwitcher"]
         ),
         .executable(
+            name: "DMonteVolumeMixer",
+            targets: ["DMonteVolumeMixer"]
+        ),
+        .executable(
             name: "DMonteCalendar",
             targets: ["DMonteCalendar"]
         ),
@@ -195,6 +199,13 @@ let package = Package(
                 "DMonteCore"
             ],
             path: "Sources/DMonteAudioSwitcherApp"
+        ),
+        .executableTarget(
+            name: "DMonteVolumeMixer",
+            dependencies: [
+                "DMonteCore"
+            ],
+            path: "Sources/DMonteVolumeMixerApp"
         ),
         .executableTarget(
             name: "DMonteCalendar",

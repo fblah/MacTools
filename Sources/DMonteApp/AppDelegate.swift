@@ -129,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openTool(_ tool: ToolboxTool) {
+        ToolboxRecentTools.record(tool, in: AppDefaults.shared)
         launchHelper(tool)
         closeToolboxPopover()
     }

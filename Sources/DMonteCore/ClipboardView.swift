@@ -444,7 +444,7 @@ private struct ClipboardSettingsView: View {
     var onQuit: () -> Void
     var onClose: () -> Void
 
-    @AppStorage(DefaultsKey.clipboardOpenAtLogin, store: AppDefaults.shared) private var openAtLogin = true
+    @AppStorage(DefaultsKey.clipboardOpenAtLogin, store: AppDefaults.shared) private var openAtLogin = false
     @AppStorage(DefaultsKey.clipboardMaxHistory, store: AppDefaults.shared) private var maxHistory = 200
 
     private let historyOptions = [50, 100, 200, 500, 1000]

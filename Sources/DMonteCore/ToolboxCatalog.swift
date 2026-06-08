@@ -57,10 +57,51 @@ public enum ToolboxCatalog {
         ToolboxTool(id: "maintenance", title: "Maintenance", iconName: "wrench.and.screwdriver.fill", tint: .pink, bundleID: prefix + "maintenance", appName: "DMonte Maintenance.app", executableName: "DMonteMaintenance", arguments: ["--open"]),
         ToolboxTool(id: "duplicateFinder", title: "Duplicate Finder", iconName: "doc.on.doc", tint: .mint, bundleID: prefix + "duplicatefinder", appName: "DMonte Duplicate Finder.app", executableName: "DMonteDuplicateFinder", arguments: ["--open"]),
         ToolboxTool(id: "audioSwitcher", title: "Audio Switcher", iconName: "speaker.wave.2.fill", tint: .purple, bundleID: prefix + "audioswitcher", appName: "DMonte Audio Switcher.app", executableName: "DMonteAudioSwitcher", arguments: ["--open"]),
+        ToolboxTool(id: "volumeMixer", title: "Volume Mixer", iconName: "slider.horizontal.3", tint: .cyan, bundleID: prefix + "volumemixer", appName: "DMonte Volume Mixer.app", executableName: "DMonteVolumeMixer", arguments: ["--open"]),
         ToolboxTool(id: "calendar", title: "Calendar", iconName: "calendar", tint: .red, bundleID: prefix + "calendar", appName: "DMonte Calendar.app", executableName: "DMonteCalendar", arguments: ["--open"]),
         ToolboxTool(id: "colorPicker", title: "Color Picker", iconName: "eyedropper.halffull", tint: .mint, bundleID: prefix + "colorpicker", appName: "DMonte Color Picker.app", executableName: "DMonteColorPicker", arguments: ["--open"]),
         ToolboxTool(id: "grabText", title: "Grab Text", iconName: "text.viewfinder", tint: .green, bundleID: prefix + "grabtext", appName: "DMonte Grab Text.app", executableName: "DMonteGrabText", arguments: ["--open"]),
         ToolboxTool(id: "focusTimer", title: "Focus Timer", iconName: "timer", tint: .red, bundleID: prefix + "focustimer", appName: "DMonte Focus Timer.app", executableName: "DMonteFocusTimer", arguments: ["--open"]),
         ToolboxTool(id: "windowManager", title: "Window Manager", iconName: "macwindow.on.rectangle", tint: .blue, bundleID: prefix + "windowmanager", appName: "DMonte Window Manager.app", executableName: "DMonteWindowManager", arguments: ["--open"])
     ]
+}
+
+public enum ToolboxRecentTools {
+    public static let maxCount = 8
+
+    public static func ids(in defaults: UserDefaults) -> [String] {
+        let storedIDs = defaults.stringArray(forKey: DefaultsKey.toolboxRecentToolIDs) ?? []
+        return Array(uniqueIDs(from: storedIDs).prefix(maxCount))
+    }
+
+    public static func tools(in defaults: UserDefaults, catalog: [ToolboxTool] = ToolboxCatalog.all) -> [ToolboxTool] {
+        let toolsByID = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
+        return ids(in: defaults).compactMap { toolsByID[$0] }
+    }
+
+    public static func record(_ tool: ToolboxTool, in defaults: UserDefaults) {
+        record(toolID: tool.id, in: defaults)
+    }
+
+    public static func record(toolID: String, in defaults: UserDefaults) {
+        guard ToolboxCatalog.all.contains(where: { $0.id == toolID }) else {
+            return
+        }
+
+        let storedIDs = defaults.stringArray(forKey: DefaultsKey.toolboxRecentToolIDs) ?? []
+        let updatedIDs = [toolID] + uniqueIDs(from: storedIDs).filter { $0 != toolID }
+        defaults.set(Array(updatedIDs.prefix(maxCount)), forKey: DefaultsKey.toolboxRecentToolIDs)
+    }
+
+    private static func uniqueIDs(from ids: [String]) -> [String] {
+        var seenIDs = Set<String>()
+        return ids.filter { id in
+            guard !seenIDs.contains(id) else {
+                return false
+            }
+
+            seenIDs.insert(id)
+            return true
+        }
+    }
 }

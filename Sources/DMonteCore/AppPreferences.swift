@@ -53,6 +53,14 @@ public enum DefaultsKey {
     public static let clipboardOpenAtLogin = "tool.clipboard.openAtLogin"
     public static let clipboardMaxHistory = "tool.clipboard.maxHistory"
     public static let grabTextCopyAutomatically = "tool.grabText.copyAutomatically"
+    public static let volumeMixerAppVolumeGains = "tool.volumeMixer.appVolumeGains"
+    public static let volumeMixerPinnedApps = "tool.volumeMixer.pinnedApps"
+    public static let volumeMixerIgnoredApps = "tool.volumeMixer.ignoredApps"
+    public static let volumeMixerHideIgnoredApps = "tool.volumeMixer.hideIgnoredApps"
+    public static let volumeMixerSmartFilter = "tool.volumeMixer.smartFilter"
+    public static let volumeMixerIncludedDefaultIgnoredApps = "tool.volumeMixer.includedDefaultIgnoredApps"
+    public static let volumeMixerOutputRoutes = "tool.volumeMixer.outputRoutes"
+    public static let toolboxRecentToolIDs = "toolbox.recentToolIDs"
 
     static let obsoleteKeys = [
         "tool.systemMonitor.enabled",
@@ -82,9 +90,14 @@ public enum AppDefaults {
             DefaultsKey.systemMonitorTemperatureUnit: TemperatureUnitPreference.celsius.rawValue,
             DefaultsKey.systemMonitorOpenAtLogin: false,
             DefaultsKey.systemMonitorShowsTrayIcon: true,
-            DefaultsKey.clipboardOpenAtLogin: true,
+            DefaultsKey.clipboardOpenAtLogin: false,
             DefaultsKey.clipboardMaxHistory: 200,
             DefaultsKey.grabTextCopyAutomatically: true,
+            DefaultsKey.volumeMixerHideIgnoredApps: true,
+            DefaultsKey.volumeMixerSmartFilter: true,
+            DefaultsKey.volumeMixerIncludedDefaultIgnoredApps: [],
+            DefaultsKey.volumeMixerOutputRoutes: [:],
+            DefaultsKey.toolboxRecentToolIDs: [],
             DefaultsKey.focusTimerFocusMinutes: 25,
             DefaultsKey.focusTimerShortBreakMinutes: 5,
             DefaultsKey.focusTimerLongBreakMinutes: 15,

@@ -15,6 +15,7 @@ public enum SystemMonitorLoginItem {
 
     public static func refreshIfEnabled() {
         guard AppDefaults.shared.bool(forKey: DefaultsKey.systemMonitorOpenAtLogin) else {
+            uninstall()
             return
         }
 
