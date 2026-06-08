@@ -1,4 +1,5 @@
 import AppKit
+import Accelerate
 import CoreAudio
 import Darwin
 import Foundation
@@ -556,8 +557,15 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
                 let sampleCount = byteCount / MemoryLayout<Float32>.size
                 let source = inputData.assumingMemoryBound(to: Float32.self)
                 let destination = outputData.assumingMemoryBound(to: Float32.self)
-                for sampleIndex in 0..<sampleCount {
-                    destination[sampleIndex] = source[sampleIndex] * gain
+                if gain <= .ulpOfOne {
+                    memset(outputData, 0, byteCount)
+                } else if abs(gain - 1) <= .ulpOfOne {
+                    if UnsafeRawPointer(source) != UnsafeRawPointer(destination) {
+                        memcpy(outputData, inputData, byteCount)
+                    }
+                } else {
+                    var scalar = gain
+                    vDSP_vsmul(source, 1, &scalar, destination, 1, vDSP_Length(sampleCount))
                 }
                 if Int(output.mDataByteSize) > byteCount {
                     memset(outputData.advanced(by: byteCount), 0, Int(output.mDataByteSize) - byteCount)
@@ -993,6 +1001,18 @@ public enum AppVolumeMixerKit {
     ) {
         var gains = persistedGains(defaults: defaults)
         gains[target.stableKey] = AppVolumeTarget.clampGain(gain)
+        defaults.set(gains, forKey: DefaultsKey.volumeMixerAppVolumeGains)
+    }
+
+    public static func setGains(
+        _ updates: [String: Float],
+        defaults: UserDefaults
+    ) {
+        guard !updates.isEmpty else { return }
+        var gains = persistedGains(defaults: defaults)
+        for (key, gain) in updates {
+            gains[key] = AppVolumeTarget.clampGain(gain)
+        }
         defaults.set(gains, forKey: DefaultsKey.volumeMixerAppVolumeGains)
     }
 

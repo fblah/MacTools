@@ -18,7 +18,7 @@ public enum VolumeMixerSizing {
     }
 
     public static var panelWidth: CGFloat { s(490) }
-    public static var panelHeight: CGFloat { s(420) }
+    public static var panelHeight: CGFloat { s(620) }
     public static var outerPadding: CGFloat { s(16) }
     public static var sectionSpacing: CGFloat { s(12) }
     public static var rowSpacing: CGFloat { s(6) }
@@ -30,5 +30,5 @@ public enum VolumeMixerSizing {
     public static var bodySize: CGFloat { s(13) }
     public static var captionSize: CGFloat { s(11) }
     public static var checkmarkSize: CGFloat { s(13) }
-    public static var scrollMaxHeight: CGFloat { s(276) }
+    public static var scrollMaxHeight: CGFloat { s(476) }
 }

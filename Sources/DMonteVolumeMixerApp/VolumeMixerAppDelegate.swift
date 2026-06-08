@@ -14,11 +14,13 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var panel: KeyablePanel?
+    private var controller: AppVolumeMixerController?
     private var outsideClickMonitor: Any?
     private var showWindowObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
+        controller = AppVolumeMixerController()
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -78,7 +80,9 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makePanel() -> KeyablePanel {
-        let content = VolumeMixerPopoverView(onQuit: { [weak self] in
+        let controller = controller ?? AppVolumeMixerController()
+        self.controller = controller
+        let content = VolumeMixerPopoverView(controller: controller, onQuit: { [weak self] in
             self?.quit()
         })
         let hosting = NSHostingView(rootView: content)
@@ -132,6 +136,7 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func cleanup() {
+        controller?.stopProcessing()
         if let monitor = outsideClickMonitor {
             NSEvent.removeMonitor(monitor)
             outsideClickMonitor = nil

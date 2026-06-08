@@ -9,6 +9,18 @@ private enum VolumeMixerTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private let volumeMixerDefaultsSuiteName = "com.havokentity.mactools.shared"
+
+private struct VolumeMixerSnapshot: Sendable {
+    let engineState: AppVolumeMixerEngineState
+    let targets: [AppVolumeTarget]
+    let ignoredApps: [AppVolumeIgnoredAppInfo]
+    let outputDevices: [AppVolumeOutputDevice]
+    let outputRouteUIDsByTargetID: [String: [String]]
+    let localIgnoredAppCount: Int
+    let defaultIgnoredOverrideCount: Int
+}
+
 @MainActor
 public final class AppVolumeMixerController: ObservableObject {
     @Published public private(set) var targets: [AppVolumeTarget] = []
@@ -26,6 +38,10 @@ public final class AppVolumeMixerController: ObservableObject {
 
     private var audioEngines: [String: AppVolumeMixerAudioEngine] = [:]
     private var refreshTask: Task<Void, Never>?
+    private var refreshWorkTask: Task<Void, Never>?
+    private var refreshRequestID = 0
+    private var pendingGainPersistence: [String: Float] = [:]
+    private var gainPersistenceTask: Task<Void, Never>?
 
     public init() {
         let defaults = AppDefaults.shared
@@ -37,23 +53,64 @@ public final class AppVolumeMixerController: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        refreshWorkTask?.cancel()
+        gainPersistenceTask?.cancel()
+        let pendingGains = pendingGainPersistence
+        if !pendingGains.isEmpty {
+            let defaults = UserDefaults(suiteName: volumeMixerDefaultsSuiteName) ?? .standard
+            AppVolumeMixerKit.setGains(pendingGains, defaults: defaults)
+        }
         for engine in audioEngines.values {
             engine.stop()
         }
     }
 
     public func refresh() {
+        scheduleRefresh()
+    }
+
+    private func scheduleRefresh() {
+        refreshRequestID += 1
+        let requestID = refreshRequestID
+        let hideIgnoredApps = hideIgnoredApps
+        let smartFilter = smartFilter
         engineState = AppVolumeMixerKit.engineState()
-        let refreshedTargets = AppVolumeMixerKit.targets(
-            defaults: AppDefaults.shared,
-            hideIgnoredApps: hideIgnoredApps,
-            smartFilter: smartFilter
-        )
-        ignoredApps = AppVolumeMixerKit.ignoredApps(defaults: AppDefaults.shared, smartFilter: smartFilter)
-        outputDevices = AppVolumeMixerKit.outputDevices()
-        outputRouteUIDsByTargetID = AppVolumeMixerKit.persistedOutputRoutes(defaults: AppDefaults.shared)
-        localIgnoredAppCount = AppVolumeMixerKit.persistedIgnoredApps(defaults: AppDefaults.shared).count
-        defaultIgnoredOverrideCount = AppVolumeMixerKit.persistedIncludedDefaultIgnoredAppIDs(defaults: AppDefaults.shared).count
+        refreshWorkTask?.cancel()
+        refreshWorkTask = Task.detached(priority: .utility) { [hideIgnoredApps, smartFilter, requestID] in
+            let defaults = UserDefaults(suiteName: volumeMixerDefaultsSuiteName) ?? .standard
+            let snapshot = VolumeMixerSnapshot(
+                engineState: AppVolumeMixerKit.engineState(),
+                targets: AppVolumeMixerKit.targets(
+                    defaults: defaults,
+                    hideIgnoredApps: hideIgnoredApps,
+                    smartFilter: smartFilter
+                ),
+                ignoredApps: AppVolumeMixerKit.ignoredApps(defaults: defaults, smartFilter: smartFilter),
+                outputDevices: AppVolumeMixerKit.outputDevices(),
+                outputRouteUIDsByTargetID: AppVolumeMixerKit.persistedOutputRoutes(defaults: defaults),
+                localIgnoredAppCount: AppVolumeMixerKit.persistedIgnoredApps(defaults: defaults).count,
+                defaultIgnoredOverrideCount: AppVolumeMixerKit.persistedIncludedDefaultIgnoredAppIDs(defaults: defaults).count
+            )
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                self?.applyRefreshSnapshot(snapshot, requestID: requestID)
+            }
+        }
+    }
+
+    private func applyRefreshSnapshot(_ snapshot: VolumeMixerSnapshot, requestID: Int) {
+        guard requestID == refreshRequestID else { return }
+        refreshWorkTask = nil
+        engineState = snapshot.engineState
+        let refreshedTargets = snapshot.targets.map { target in
+            guard let pendingGain = pendingGainPersistence[target.stableKey] else { return target }
+            return targetWithGain(target, gain: pendingGain)
+        }
+        ignoredApps = snapshot.ignoredApps
+        outputDevices = snapshot.outputDevices
+        outputRouteUIDsByTargetID = snapshot.outputRouteUIDsByTargetID
+        localIgnoredAppCount = snapshot.localIgnoredAppCount
+        defaultIgnoredOverrideCount = snapshot.defaultIgnoredOverrideCount
         let activeTargetIDs = Set(refreshedTargets.filter(\.isActive).map(\.id))
         let staleEngineIDs = audioEngines.keys.filter { !activeTargetIDs.contains($0) }
         for id in staleEngineIDs {
@@ -82,8 +139,8 @@ public final class AppVolumeMixerController: ObservableObject {
     }
 
     public func setGain(_ gain: Float, for target: AppVolumeTarget) {
-        AppVolumeMixerKit.setGain(gain, for: target)
         let clamped = AppVolumeTarget.clampGain(gain)
+        scheduleGainPersistence(clamped, forKey: target.stableKey)
         if let engine = audioEngines[target.id] {
             engine.setGain(clamped)
         }
@@ -96,20 +153,7 @@ public final class AppVolumeMixerController: ObservableObject {
         }
         targets = targets.map { item in
             guard item.id == target.id else { return item }
-            return AppVolumeTarget(
-                processID: item.processID,
-                audioObjectIDs: item.audioObjectIDs,
-                subprocesses: item.subprocesses,
-                bundleIdentifier: item.bundleIdentifier,
-                displayName: item.displayName,
-                isActive: item.isActive,
-                isRunningOutput: item.isRunningOutput,
-                isPinned: item.isPinned,
-                isIgnored: item.isIgnored,
-                isLocallyIgnored: item.isLocallyIgnored,
-                isDefaultIgnored: item.isDefaultIgnored,
-                gain: clamped
-            )
+            return targetWithGain(item, gain: clamped)
         }
         sessionState = AppVolumeMixerSessionState(
             activeTargetIDs: Set(audioEngines.keys),
@@ -298,10 +342,48 @@ public final class AppVolumeMixerController: ObservableObject {
             errorMessage: keepError ? sessionState.errorMessage : nil
         )
     }
+
+    private func scheduleGainPersistence(_ gain: Float, forKey key: String) {
+        pendingGainPersistence[key] = gain
+        gainPersistenceTask?.cancel()
+        gainPersistenceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingGainPersistenceAsync()
+        }
+    }
+
+    private func flushPendingGainPersistenceAsync() {
+        let updates = pendingGainPersistence
+        pendingGainPersistence.removeAll()
+        gainPersistenceTask = nil
+        guard !updates.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            let defaults = UserDefaults(suiteName: volumeMixerDefaultsSuiteName) ?? .standard
+            AppVolumeMixerKit.setGains(updates, defaults: defaults)
+        }
+    }
+
+    private func targetWithGain(_ target: AppVolumeTarget, gain: Float) -> AppVolumeTarget {
+        AppVolumeTarget(
+            processID: target.processID,
+            audioObjectIDs: target.audioObjectIDs,
+            subprocesses: target.subprocesses,
+            bundleIdentifier: target.bundleIdentifier,
+            displayName: target.displayName,
+            isActive: target.isActive,
+            isRunningOutput: target.isRunningOutput,
+            isPinned: target.isPinned,
+            isIgnored: target.isIgnored,
+            isLocallyIgnored: target.isLocallyIgnored,
+            isDefaultIgnored: target.isDefaultIgnored,
+            gain: gain
+        )
+    }
 }
 
 public struct VolumeMixerPopoverView: View {
-    @StateObject private var controller = AppVolumeMixerController()
+    @ObservedObject private var controller: AppVolumeMixerController
     @State private var hoveredExpandTargetID: String?
     @State private var hoveredMuteTargetID: String?
     @State private var hoveredRevealIgnoredID: String?
@@ -310,7 +392,8 @@ public struct VolumeMixerPopoverView: View {
     @State private var searchText = ""
     private let onQuit: () -> Void
 
-    public init(onQuit: @escaping () -> Void) {
+    public init(controller: AppVolumeMixerController, onQuit: @escaping () -> Void) {
+        self.controller = controller
         self.onQuit = onQuit
     }
 
