@@ -138,8 +138,8 @@ jobs:
             prerelease_flag="--prerelease"
           fi
           gh release create "$TAG_NAME" \
-            "dist/DMonte-Toolbox-$VERSION.zip" \
+            "dist/DMonte-Tool-Box-$VERSION.zip" \
             "dist/appcast.xml" \
-            --title "D'Monte's Toolbox $VERSION" \
-            --notes "D'Monte's Toolbox $VERSION release." \
+            --title "D'Monte's Tool Box $VERSION" \
+            --notes "D'Monte's Tool Box $VERSION release." \
             $prerelease_flag

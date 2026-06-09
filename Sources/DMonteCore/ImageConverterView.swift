@@ -860,7 +860,7 @@ private struct ImageConverterSettingsView: View {
                 .buttonStyle(.plain)
             }
 
-            Text("Quit closes Image Converter. You can launch it again from D'Monte's Toolbox.")
+            Text("Quit closes Image Converter. You can launch it again from D'Monte's Tool Box.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

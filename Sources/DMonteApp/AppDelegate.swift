@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         StatusBarButtonContent.install(
             image: Self.toolboxStatusImage(),
             in: item,
-            toolTip: "D'Monte's Toolbox",
+            toolTip: "D'Monte's Tool Box",
             target: self,
             action: #selector(toolboxStatusItemClicked)
         )
@@ -347,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         image.isTemplate = true
-        image.accessibilityDescription = "D'Monte's Toolbox"
+        image.accessibilityDescription = "D'Monte's Tool Box"
 
         return image
     }

@@ -1,8 +1,8 @@
-# D'Monte's Toolbox
+# D'Monte's Tool Box
 
-A native macOS menu bar toolbox — 18 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
+A native macOS menu bar tool box — 18 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
 
-Open the toolbox from the menu bar, search for what you need, and launch it. Each tool is a self-contained helper with its own polished SwiftUI interface; tools that run continuously (like System Monitor and Clipboard History) add their own menu bar item.
+Open the tool box from the menu bar, search for what you need, and launch it. Each tool is a self-contained helper with its own polished SwiftUI interface; tools that run continuously (like System Monitor and Clipboard History) add their own menu bar item.
 
 > **macOS 14+** · Universal · Signed with Developer ID and **notarized by Apple** — downloads open without Gatekeeper warnings.
 
@@ -10,9 +10,9 @@ Open the toolbox from the menu bar, search for what you need, and launch it. Eac
 
 Grab the latest signed, notarized build from the [**Releases**](https://github.com/havokentity/MacTools/releases/latest) page:
 
-1. Download `DMonte-Toolbox-<version>.zip`
-2. Unzip and drag **DMonte Toolbox.app** to `/Applications`
-3. Launch it — the toolbox icon appears in your menu bar
+1. Download `DMonte-Tool-Box-<version>.zip`
+2. Unzip and drag **DMonte Tool Box.app** to `/Applications`
+3. Launch it — the tool box icon appears in your menu bar
 
 The app updates itself automatically via [Sparkle](https://sparkle-project.org); new releases are delivered in the background.
 
@@ -57,14 +57,14 @@ Requires macOS 14+ and a recent Swift toolchain (Xcode 26 / Swift 6.1).
 ```bash
 swift build          # debug build
 swift test           # run the test suite
-swift run DMonte     # run the toolbox from the menu bar
+swift run DMonte     # run the tool box from the menu bar
 ```
 
 ### Package a distributable app
 
 ```bash
 Scripts/package_app.sh
-open "dist/DMonte Toolbox.app"
+open "dist/DMonte Tool Box.app"
 ```
 
 `package_app.sh` builds in release mode, assembles the bundle with all helpers, and code‑signs it. With a Developer ID identity present it signs with the Hardened Runtime (notarization‑ready); otherwise it falls back to an ad‑hoc signature for local testing.
@@ -90,7 +90,7 @@ https://github.com/havokentity/MacTools/releases/latest/download/appcast.xml
 
 ## Architecture
 
-A single `DMonteCore` library holds each tool's pure, testable logic plus its SwiftUI views; the toolbox and every tool are separate executables that share it. A data‑driven `ToolboxCatalog` is the single source of truth for the dashboard, the launcher, and packaging — adding a tool is one catalog entry plus its helper target.
+A single `DMonteCore` library holds each tool's pure, testable logic plus its SwiftUI views; the tool box and every tool are separate executables that share it. A data-driven `ToolboxCatalog` is the single source of truth for the dashboard, the launcher, and packaging — adding a tool is one catalog entry plus its helper target.
 
 ## License
 

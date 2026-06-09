@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to D'Monte's Toolbox are documented here. This project
+All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
@@ -40,7 +40,7 @@ adheres to [Semantic Versioning](https://semver.org) and the
 - **Toolbox icon styling.** The hand‑drawn toolbox glyph rendered solid black;
   it's now an adaptive template (semi‑transparent white on dark menu bars) that
   highlights on hover, consistent with every other tool.
-- **Launching the Toolbox no longer reopens previously‑open tools.** The
+- **Launching the Tool Box no longer reopens previously‑open tools.** The
   session‑restore behaviour misfired because a menu‑bar app rarely gets a clean
   termination, so the saved set persisted and tools reopened on nearly every
   launch. Removed entirely — tools open only when you click them.
@@ -59,7 +59,7 @@ First public release. 🎉
 - **Public distribution**: releases are now signed with Developer ID under the
   Hardened Runtime and **notarized + stapled by Apple** in CI, so downloads open
   without Gatekeeper warnings.
-- A version label in the Toolbox settings sheet (sourced from the bundle).
+- A version label in the Tool Box settings sheet (sourced from the bundle).
 
 The suite now ships **18 tools**: System Monitor, Clipboard History, Clean Drive,
 Disk Usage Analyzer, Duplicate Finder, Uninstall Apps, Download Video, Image
@@ -116,7 +116,7 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
   hotkey. Honors password‑manager/transient markers.
 
 ### Fixed
-- The Toolbox search field is now focusable and clickable.
+- The Tool Box search field is now focusable and clickable.
 
 ## [0.3.0] — 2026-05-29
 
@@ -128,13 +128,13 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 ## [0.2.0] — earlier
 
 ### Added
-- Disk Usage Analyzer, Uninstall Apps, and Download Video tools; the toolbox
+- Disk Usage Analyzer, Uninstall Apps, and Download Video tools; the tool box
   dashboard and Sparkle‑based auto‑updates.
 
 ## [0.1.x] — initial
 
 ### Added
-- The menu bar toolbox shell and the first tool, System Monitor (live CPU,
+- The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
 [0.8.0]: https://github.com/havokentity/MacTools/releases/tag/v0.8.0

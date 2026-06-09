@@ -1261,7 +1261,7 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private var fullDiskAccessHintText: String {
-        "Grant Full Disk Access to DMonte Toolbox, then reopen this window and Rescan to measure every folder."
+        "Grant Full Disk Access to DMonte Tool Box, then reopen this window and Rescan to measure every folder."
     }
 
     private var currentNode: DiskNode? {

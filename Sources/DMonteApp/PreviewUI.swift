@@ -32,7 +32,7 @@ final class PreviewAppDelegate: NSObject, NSApplicationDelegate {
 
         let toolboxSize = AppDelegate.preferredPopoverSize()
         showWindow(
-            title: "DMonte Toolbox Popup Preview",
+            title: "DMonte Tool Box Popup Preview",
             size: toolboxSize,
             originOffset: NSPoint(x: 230, y: -90),
             rootView: FixedPreviewFrame(size: toolboxSize) {

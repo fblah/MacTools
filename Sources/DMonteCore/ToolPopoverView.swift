@@ -110,7 +110,7 @@ private struct ToolboxHeader: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("D'Monte's Toolbox")
+            Text("D'Monte's Tool Box")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.primary)
                 .padding(.leading, 16)
@@ -723,7 +723,7 @@ private struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Text("D'Monte's Toolbox Settings")
+                Text("D'Monte's Tool Box Settings")
                     .font(.system(size: 20, weight: .bold))
 
                 Spacer()
@@ -748,7 +748,7 @@ private struct SettingsView: View {
             Button {
                 onQuit()
             } label: {
-                Label("Quit D'Monte's Toolbox", systemImage: "power")
+                Label("Quit D'Monte's Tool Box", systemImage: "power")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -843,7 +843,7 @@ private struct SystemMonitorSettingsView: View {
 
             Divider()
 
-            Text("Quit closes System Monitor without changing Toolbox launch behavior.")
+            Text("Quit closes System Monitor without changing Tool Box launch behavior.")
                 .font(.system(size: layout.descriptionFontSize, weight: .medium))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Notarizes and staples the packaged "DMonte Toolbox.app" so Gatekeeper opens it
+# Notarizes and staples the packaged "DMonte Tool Box.app" so Gatekeeper opens it
 # without warnings on other people's Macs. Run AFTER Scripts/package_app.sh has
 # produced a Developer-ID + Hardened-Runtime signed app.
 #
@@ -21,7 +21,7 @@ set -euo pipefail
 # so `make_release_artifacts.sh` can run unnotarized for local/ad-hoc builds.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/dist/DMonte Toolbox.app"
+APP_DIR="$ROOT_DIR/dist/DMonte Tool Box.app"
 
 if [[ ! -d "$APP_DIR" ]]; then
   echo "error: $APP_DIR not found — run Scripts/package_app.sh first." >&2
@@ -49,7 +49,7 @@ MSG
 fi
 
 # notarytool ingests a zip/dmg/pkg, not a bare .app — zip it for submission.
-SUBMIT_ZIP="$(mktemp -d)/DMonteToolbox-notarize.zip"
+SUBMIT_ZIP="$(mktemp -d)/DMonteToolBox-notarize.zip"
 echo "Zipping app for notarization…"
 ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$SUBMIT_ZIP"
 

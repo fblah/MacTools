@@ -18,7 +18,7 @@ public final class ToolboxStatusView: NSControl {
         highlightLayer.masksToBounds = true
         highlightLayer.isHidden = true
         layer?.insertSublayer(highlightLayer, at: 0)
-        toolTip = "D'Monte's Toolbox"
+        toolTip = "D'Monte's Tool Box"
     }
 
     public required init?(coder: NSCoder) {

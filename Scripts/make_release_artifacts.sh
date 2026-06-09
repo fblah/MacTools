@@ -8,7 +8,7 @@ TAG_NAME="${TAG_NAME:-v$VERSION}"
 REPOSITORY="${GITHUB_REPOSITORY:-havokentity/MacTools}"
 SPARKLE_ACCOUNT="${SPARKLE_ACCOUNT:-com.havokentity.mactools}"
 SPARKLE_SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
-ZIP_NAME="DMonte-Toolbox-$VERSION.zip"
+ZIP_NAME="DMonte-Tool-Box-$VERSION.zip"
 ZIP_PATH="$ROOT_DIR/dist/$ZIP_NAME"
 APPCAST_PATH="$ROOT_DIR/dist/appcast.xml"
 DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/$TAG_NAME/$ZIP_NAME"
@@ -23,7 +23,7 @@ bash "$ROOT_DIR/Scripts/notarize_app.sh"
 
 rm -f "$ZIP_PATH" "$APPCAST_PATH"
 cd "$ROOT_DIR/dist"
-ditto -c -k --sequesterRsrc --keepParent "DMonte Toolbox.app" "$ZIP_NAME"
+ditto -c -k --sequesterRsrc --keepParent "DMonte Tool Box.app" "$ZIP_NAME"
 
 if [[ -n "${SPARKLE_PRIVATE_KEY:-}" ]]; then
   signature_output="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$SPARKLE_SIGN_UPDATE" --ed-key-file - "$ZIP_PATH")"
@@ -46,16 +46,16 @@ cat > "$APPCAST_PATH" <<XML
      xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
      xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
-    <title>D'Monte's Toolbox Updates</title>
+    <title>D'Monte's Tool Box Updates</title>
     <link>https://github.com/$REPOSITORY</link>
-    <description>Release feed for D'Monte's Toolbox.</description>
+    <description>Release feed for D'Monte's Tool Box.</description>
     <language>en</language>
     <item>
-      <title>D'Monte's Toolbox $VERSION</title>
+      <title>D'Monte's Tool Box $VERSION</title>
       <link>https://github.com/$REPOSITORY/releases/tag/$TAG_NAME</link>
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-      <description sparkle:format="plain-text">D'Monte's Toolbox $VERSION release.</description>
+      <description sparkle:format="plain-text">D'Monte's Tool Box $VERSION release.</description>
       <pubDate>$pub_date</pubDate>
       <enclosure
         url="$DOWNLOAD_URL"

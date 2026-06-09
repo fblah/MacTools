@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/dist/DMonte Toolbox.app"
+APP_DIR="$ROOT_DIR/dist/DMonte Tool Box.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
