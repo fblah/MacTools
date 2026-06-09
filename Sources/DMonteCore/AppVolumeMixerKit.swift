@@ -135,6 +135,55 @@ public struct AppVolumeOutputDevice: Identifiable, Sendable, Equatable {
     }
 }
 
+public struct AppVolumeMasterVolumeState: Sendable, Equatable {
+    public let deviceID: AudioDeviceID?
+    public let deviceName: String
+    public let volume: Float
+    public let volumeSupported: Bool
+    public let isMuted: Bool
+    public let muteSupported: Bool
+
+    public var hasOutputDevice: Bool { deviceID != nil }
+
+    public init(
+        deviceID: AudioDeviceID? = nil,
+        deviceName: String = "System Output",
+        volume: Float = 0,
+        volumeSupported: Bool = false,
+        isMuted: Bool = false,
+        muteSupported: Bool = false
+    ) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.volume = AppVolumeTarget.clampGain(volume)
+        self.volumeSupported = volumeSupported
+        self.isMuted = isMuted
+        self.muteSupported = muteSupported
+    }
+
+    public func withVolume(_ volume: Float) -> AppVolumeMasterVolumeState {
+        AppVolumeMasterVolumeState(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            volume: volume,
+            volumeSupported: volumeSupported,
+            isMuted: isMuted,
+            muteSupported: muteSupported
+        )
+    }
+
+    public func withMuted(_ muted: Bool) -> AppVolumeMasterVolumeState {
+        AppVolumeMasterVolumeState(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            volume: volume,
+            volumeSupported: volumeSupported,
+            isMuted: muted,
+            muteSupported: muteSupported
+        )
+    }
+}
+
 public struct AppVolumeIgnoredAppInfo: Codable, Identifiable, Sendable, Equatable {
     public enum Source: String, Codable, Sendable {
         case shippedDefault
@@ -858,6 +907,24 @@ public enum AppVolumeMixerKit {
                 }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
+    }
+
+    public static func masterVolumeState() -> AppVolumeMasterVolumeState {
+        guard let defaultOutputID = AudioDeviceKit.defaultOutputDeviceID() else {
+            return AppVolumeMasterVolumeState(deviceName: "No Output Device")
+        }
+
+        let deviceName = AudioDeviceKit.outputDevices().first { $0.id == defaultOutputID }?.name ?? "Default Output"
+        let volume = AudioDeviceKit.volume(for: defaultOutputID)
+        let isMuted = AudioDeviceKit.isMuted(defaultOutputID)
+        return AppVolumeMasterVolumeState(
+            deviceID: defaultOutputID,
+            deviceName: deviceName,
+            volume: volume ?? 0,
+            volumeSupported: volume != nil,
+            isMuted: isMuted ?? false,
+            muteSupported: isMuted != nil
+        )
     }
 
     private static func activeTargets(

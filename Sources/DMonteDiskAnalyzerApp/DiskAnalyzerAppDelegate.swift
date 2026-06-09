@@ -40,7 +40,7 @@ final class DiskAnalyzerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         }
     }
 
-    private static let minimumContentSize = NSSize(width: 520, height: 460)
+    private static let minimumContentSize = NSSize(width: 760, height: 460)
     private static let windowedCornerRadius: CGFloat = 18
 
     private func configureWindow() {

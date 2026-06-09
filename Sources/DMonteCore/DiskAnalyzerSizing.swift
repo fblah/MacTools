@@ -3,7 +3,7 @@ import AppKit
 public enum DiskAnalyzerSizing {
     public static func preferredSize() -> NSSize {
         let scale = currentScale
-        return NSSize(width: (720 * scale).rounded(), height: (640 * scale).rounded())
+        return NSSize(width: (980 * scale).rounded(), height: (640 * scale).rounded())
     }
 
     static var currentScale: CGFloat {

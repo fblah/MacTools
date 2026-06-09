@@ -46,4 +46,23 @@ final class ToolboxRecentToolsTests: XCTestCase {
 
         XCTAssertEqual(ToolboxRecentTools.ids(in: defaults), ["calendar"])
     }
+
+    func testRemoveDeletesToolFromRecents() {
+        ToolboxRecentTools.record(toolID: "calendar", in: defaults)
+        ToolboxRecentTools.record(toolID: "clipboard", in: defaults)
+        ToolboxRecentTools.record(toolID: "devTools", in: defaults)
+
+        ToolboxRecentTools.remove(toolID: "clipboard", in: defaults)
+
+        XCTAssertEqual(ToolboxRecentTools.ids(in: defaults), ["devTools", "calendar"])
+    }
+
+    func testRemoveLeavesRecentsUnchangedForMissingTool() {
+        ToolboxRecentTools.record(toolID: "calendar", in: defaults)
+        ToolboxRecentTools.record(toolID: "clipboard", in: defaults)
+
+        ToolboxRecentTools.remove(toolID: "not-a-tool", in: defaults)
+
+        XCTAssertEqual(ToolboxRecentTools.ids(in: defaults), ["clipboard", "calendar"])
+    }
 }

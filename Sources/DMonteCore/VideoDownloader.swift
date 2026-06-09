@@ -135,8 +135,10 @@ final class VideoDownloaderModel: ObservableObject {
         var state: DownloadState
         var retryCount: Int
         /// Folder the file is saved into, captured at launch so a completed row can
-        /// reveal it in Finder.
+        /// reveal it in Finder when the final file cannot be identified.
         var outputDirectory: String?
+        /// Final file path reported by yt-dlp after a successful download.
+        var outputFilePath: String?
     }
 
     @Published var urlText = ""
@@ -274,7 +276,8 @@ final class VideoDownloaderModel: ObservableObject {
             copyText: url,
             state: .queued,
             retryCount: 0,
-            outputDirectory: preferences.saveDirectoryPath
+            outputDirectory: preferences.saveDirectoryPath,
+            outputFilePath: nil
         )
 
         downloads.append(item)
@@ -283,15 +286,30 @@ final class VideoDownloaderModel: ObservableObject {
         launchAvailableDownloads()
     }
 
-    /// Re-queues a failed download from scratch. Triggered by tapping a failed row.
-    /// Reveals a completed download's folder in Finder. Falls back to the configured save
-    /// directory if the item didn't capture one. No-op if the folder no longer exists.
+    /// Reveals a completed download in Finder. Falls back to the configured save
+    /// directory if the item didn't capture a final file path.
     func revealInFinder(id: UUID) {
         guard let item = downloads.first(where: { $0.id == id }) else { return }
-        let path = item.outputDirectory ?? VideoDownloaderPreferences.current.saveDirectoryPath
-        let url = URL(fileURLWithPath: path, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        let fileManager = FileManager.default
+
+        if let outputFilePath = item.outputFilePath {
+            var isDirectory: ObjCBool = false
+            let fileExists = fileManager.fileExists(atPath: outputFilePath, isDirectory: &isDirectory)
+            if fileExists, !isDirectory.boolValue {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: outputFilePath)])
+                return
+            }
+        }
+
+        let directoryPath = item.outputDirectory ?? VideoDownloaderPreferences.current.saveDirectoryPath
+        let directoryURL = URL(fileURLWithPath: directoryPath, isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return
+        }
+
+        NSWorkspace.shared.open(directoryURL)
     }
 
     func retryDownload(id: UUID) {
@@ -310,6 +328,7 @@ final class VideoDownloaderModel: ObservableObject {
         downloads[index].progressFraction = nil
         downloads[index].progressDetail = "Waiting"
         downloads[index].copyText = downloads[index].url
+        downloads[index].outputFilePath = nil
         launchAvailableDownloads()
     }
 
@@ -346,6 +365,7 @@ final class VideoDownloaderModel: ObservableObject {
             : "Downloading"
         downloads[index].progressFraction = nil
         downloads[index].progressDetail = "Starting"
+        downloads[index].outputFilePath = nil
 
         let url = downloads[index].url
         let preferences = VideoDownloaderPreferences.current
@@ -400,6 +420,7 @@ final class VideoDownloaderModel: ObservableObject {
         downloads[index].progressFraction = result.succeeded ? 1 : nil
         downloads[index].progressDetail = result.succeeded ? "Done" : ""
         downloads[index].copyText = result.copyText
+        downloads[index].outputFilePath = result.outputFilePath
 
         if result.succeeded {
             VideoDownloaderNotifications.notifyDownloadComplete(detail: result.detail)
@@ -523,6 +544,7 @@ enum VideoDownloaderRunner {
         var detail: String
         var copyText: String
         var succeeded: Bool
+        var outputFilePath: String?
     }
 
     struct Progress: Sendable {
@@ -577,7 +599,8 @@ enum VideoDownloaderRunner {
                     title: "yt-dlp is required",
                     detail: "Install with Homebrew: brew install yt-dlp",
                     copyText: "yt-dlp is required. Install with Homebrew: brew install yt-dlp",
-                    succeeded: false
+                    succeeded: false,
+                    outputFilePath: nil
                 )
             }
 
@@ -644,13 +667,15 @@ enum VideoDownloaderRunner {
                 }
             }
 
-            func successResult() -> Result {
+            func successResult(from attempt: Attempt) -> Result {
+                let outputFileURL = downloadedFileURL(from: attempt.output, saveDirectory: saveURL)
                 let message = "Download complete. Saved to \(saveURL.path)"
                 return Result(
                     title: "Download complete",
                     detail: "Saved to \(saveURL.lastPathComponent)",
                     copyText: message,
-                    succeeded: true
+                    succeeded: true,
+                    outputFilePath: outputFileURL?.path
                 )
             }
 
@@ -660,7 +685,8 @@ enum VideoDownloaderRunner {
                         title: "Download failed",
                         detail: errorMessage,
                         copyText: errorMessage,
-                        succeeded: false
+                        succeeded: false,
+                        outputFilePath: nil
                     )
                 }
 
@@ -670,7 +696,8 @@ enum VideoDownloaderRunner {
                         title: "Sign-in required",
                         detail: hint,
                         copyText: attempt.output.isEmpty ? hint : "\(attempt.output)\n\n\(hint)",
-                        succeeded: false
+                        succeeded: false,
+                        outputFilePath: nil
                     )
                 }
 
@@ -678,21 +705,22 @@ enum VideoDownloaderRunner {
                     title: "Download failed",
                     detail: lastUsefulLine(from: attempt.output),
                     copyText: attempt.output.isEmpty ? "Download failed. Check the link and try again." : attempt.output,
-                    succeeded: false
+                    succeeded: false,
+                    outputFilePath: nil
                 )
             }
 
             // Cookies disabled: a single plain attempt.
             if preferences.cookieSource == .disabled {
                 let attempt = await runAttempt(cookieBrowser: nil)
-                return attempt.status == 0 ? successResult() : failureResult(from: attempt, loginGated: false)
+                return attempt.status == 0 ? successResult(from: attempt) : failureResult(from: attempt, loginGated: false)
             }
 
             // A pinned browser: always send its cookies.
             if let pinnedBrowser = preferences.cookieSource.ytDlpBrowser {
                 let attempt = await runAttempt(cookieBrowser: pinnedBrowser)
                 return attempt.status == 0
-                    ? successResult()
+                    ? successResult(from: attempt)
                     : failureResult(from: attempt, loginGated: isAuthError(attempt.output))
             }
 
@@ -700,7 +728,7 @@ enum VideoDownloaderRunner {
             // browser keychain, then escalate to each signed-in browser on a sign-in error.
             let firstAttempt = await runAttempt(cookieBrowser: nil)
             if firstAttempt.status == 0 {
-                return successResult()
+                return successResult(from: firstAttempt)
             }
 
             guard !Task.isCancelled, isAuthError(firstAttempt.output) else {
@@ -714,7 +742,7 @@ enum VideoDownloaderRunner {
 
                 let attempt = await runAttempt(cookieBrowser: browser)
                 if attempt.status == 0 {
-                    return successResult()
+                    return successResult(from: attempt)
                 }
             }
 
@@ -834,6 +862,67 @@ enum VideoDownloaderRunner {
         }
 
         return String(text[range])
+    }
+
+    static func downloadedFileURL(from output: String, saveDirectory: URL) -> URL? {
+        let candidates = output
+            .split(separator: "\n")
+            .flatMap { downloadedFilePathCandidates(in: String($0)) }
+
+        for candidate in candidates.reversed() {
+            let url = candidate.hasPrefix("/")
+                ? URL(fileURLWithPath: candidate)
+                : saveDirectory.appendingPathComponent(candidate)
+
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue else {
+                continue
+            }
+
+            return url
+        }
+
+        return nil
+    }
+
+    private static func downloadedFilePathCandidates(in line: String) -> [String] {
+        let patterns = [
+            #"\[download\]\s+Destination:\s+(.+)$"#,
+            #"\[download\]\s+(.+)\s+has already been downloaded"#,
+            #"\[Merger\]\s+Merging formats into\s+\"(.+)\""#,
+            #"\[VideoConvertor\]\s+Converting video from .+ to \"(.+)\""#,
+            #"\[MoveFiles\]\s+Moving file \"(.+)\" to \"(.+)\""#
+        ]
+
+        return patterns
+            .flatMap { captures(in: line, pattern: $0) }
+            .map {
+                $0.trimmingCharacters(
+                    in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\""))
+                )
+            }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func captures(in text: String, pattern: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges > 1 else {
+            return []
+        }
+
+        return (1..<match.numberOfRanges).compactMap { index in
+            guard let range = Range(match.range(at: index), in: text) else {
+                return nil
+            }
+
+            return String(text[range])
+        }
     }
 
     private static func pythonModuleExists(executablePath: String) -> Bool {

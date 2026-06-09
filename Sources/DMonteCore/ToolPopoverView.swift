@@ -175,7 +175,12 @@ private struct DashboardView: View {
                 EmptyToolsView()
             } else {
                 if showsRecents {
-                    ToolSection(title: "Recently Used", tools: recentTools, onOpenTool: onOpenTool)
+                    ToolSection(
+                        title: "Recently Used",
+                        tools: recentTools,
+                        onOpenTool: onOpenTool,
+                        onRemoveTool: removeRecentTool
+                    )
 
                     Divider()
                         .padding(.vertical, 2)
@@ -211,12 +216,18 @@ private struct DashboardView: View {
     private func refreshRecents() {
         recentToolIDs = ToolboxRecentTools.ids(in: AppDefaults.shared)
     }
+
+    private func removeRecentTool(_ tool: ToolboxTool) {
+        ToolboxRecentTools.remove(toolID: tool.id, in: AppDefaults.shared)
+        refreshRecents()
+    }
 }
 
 private struct ToolSection: View {
     var title: String
     var tools: [ToolboxTool]
     var onOpenTool: (ToolboxTool) -> Void
+    var onRemoveTool: ((ToolboxTool) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -224,7 +235,7 @@ private struct ToolSection: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
 
-            ToolGrid(tools: tools, onOpenTool: onOpenTool)
+            ToolGrid(tools: tools, onOpenTool: onOpenTool, onRemoveTool: onRemoveTool)
         }
     }
 }
@@ -232,11 +243,14 @@ private struct ToolSection: View {
 private struct ToolGrid: View {
     var tools: [ToolboxTool]
     var onOpenTool: (ToolboxTool) -> Void
+    var onRemoveTool: ((ToolboxTool) -> Void)?
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
             ForEach(tools) { tool in
-                ToolboxIcon(tool: tool) {
+                ToolboxIcon(tool: tool, onRemove: onRemoveTool.map { removeTool in
+                    { removeTool(tool) }
+                }) {
                     onOpenTool(tool)
                 }
             }
@@ -250,31 +264,56 @@ private struct ToolGrid: View {
 
 private struct ToolboxIcon: View {
     var tool: ToolboxTool
+    var onRemove: (() -> Void)?
     var action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(tool.tint.opacity(0.13))
-                        .frame(width: 54, height: 54)
+        ZStack(alignment: .topTrailing) {
+            Button(action: action) {
+                VStack(spacing: 8) {
+                    ZStack {
+                        Circle()
+                            .fill(tool.tint.opacity(0.13))
+                            .frame(width: 54, height: 54)
 
-                    Image(systemName: tool.iconName)
-                        .symbolRenderingMode(.hierarchical)
-                        .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(tool.tint)
+                        Image(systemName: tool.iconName)
+                            .symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 25, weight: .semibold))
+                            .foregroundStyle(tool.tint)
+                    }
+
+                    Text(tool.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .frame(width: 82, height: 30, alignment: .top)
                 }
-
-                Text(tool.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .frame(width: 82, height: 30, alignment: .top)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if let onRemove, isHovering {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 17, height: 17)
+                        .background(.regularMaterial, in: Circle())
+                        .overlay {
+                            Circle()
+                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.75)
+                        }
+                }
+                .buttonStyle(.plain)
+                .help("Remove from Recently Used")
+                .offset(x: -5, y: -3)
+            }
         }
-        .buttonStyle(.plain)
+        .frame(width: 82, height: 92, alignment: .top)
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 

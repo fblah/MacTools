@@ -13,6 +13,7 @@ private let volumeMixerDefaultsSuiteName = "com.havokentity.mactools.shared"
 
 private struct VolumeMixerSnapshot: Sendable {
     let engineState: AppVolumeMixerEngineState
+    let masterVolumeState: AppVolumeMasterVolumeState
     let targets: [AppVolumeTarget]
     let ignoredApps: [AppVolumeIgnoredAppInfo]
     let outputDevices: [AppVolumeOutputDevice]
@@ -25,6 +26,7 @@ private struct VolumeMixerSnapshot: Sendable {
 public final class AppVolumeMixerController: ObservableObject {
     @Published public private(set) var targets: [AppVolumeTarget] = []
     @Published public private(set) var engineState: AppVolumeMixerEngineState = .unsupportedOS
+    @Published public private(set) var masterVolumeState = AppVolumeMasterVolumeState()
     @Published public private(set) var sessionState = AppVolumeMixerSessionState()
     @Published public private(set) var expandedTargetIDs: Set<String> = []
     @Published public private(set) var ignoredApps: [AppVolumeIgnoredAppInfo] = []
@@ -80,6 +82,7 @@ public final class AppVolumeMixerController: ObservableObject {
             let defaults = UserDefaults(suiteName: volumeMixerDefaultsSuiteName) ?? .standard
             let snapshot = VolumeMixerSnapshot(
                 engineState: AppVolumeMixerKit.engineState(),
+                masterVolumeState: AppVolumeMixerKit.masterVolumeState(),
                 targets: AppVolumeMixerKit.targets(
                     defaults: defaults,
                     hideIgnoredApps: hideIgnoredApps,
@@ -102,6 +105,7 @@ public final class AppVolumeMixerController: ObservableObject {
         guard requestID == refreshRequestID else { return }
         refreshWorkTask = nil
         engineState = snapshot.engineState
+        masterVolumeState = snapshot.masterVolumeState
         let refreshedTargets = snapshot.targets.map { target in
             guard let pendingGain = pendingGainPersistence[target.stableKey] else { return target }
             return targetWithGain(target, gain: pendingGain)
@@ -136,6 +140,26 @@ public final class AppVolumeMixerController: ObservableObject {
         smartFilter = value
         AppDefaults.shared.set(value, forKey: DefaultsKey.volumeMixerSmartFilter)
         refresh()
+    }
+
+    public func setMasterVolume(_ volume: Float) {
+        guard let deviceID = masterVolumeState.deviceID, masterVolumeState.volumeSupported else { return }
+        let clamped = AppVolumeTarget.clampGain(volume)
+        masterVolumeState = masterVolumeState.withVolume(clamped)
+        guard AudioDeviceKit.setVolume(clamped, for: deviceID) else {
+            refresh()
+            return
+        }
+    }
+
+    public func toggleMasterMute() {
+        guard let deviceID = masterVolumeState.deviceID, masterVolumeState.muteSupported else { return }
+        let newValue = !masterVolumeState.isMuted
+        if AudioDeviceKit.setMuted(newValue, for: deviceID) {
+            masterVolumeState = masterVolumeState.withMuted(newValue)
+        } else {
+            refresh()
+        }
     }
 
     public func setGain(_ gain: Float, for target: AppVolumeTarget) {
@@ -386,6 +410,7 @@ public struct VolumeMixerPopoverView: View {
     @ObservedObject private var controller: AppVolumeMixerController
     @State private var hoveredExpandTargetID: String?
     @State private var hoveredMuteTargetID: String?
+    @State private var hoveredMasterMute = false
     @State private var hoveredRevealIgnoredID: String?
     @State private var hoveredIncludeDefaultIgnoredID: String?
     @State private var selectedTab: VolumeMixerTab = .apps
@@ -515,6 +540,9 @@ public struct VolumeMixerPopoverView: View {
     private var appList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: VolumeMixerSizing.rowSpacing) {
+                sectionHeader("MASTER VOLUME")
+                masterVolumeRow
+                    .padding(.bottom, 4)
                 sectionHeader("APP VOLUME")
                 if let errorMessage = controller.sessionState.errorMessage {
                     errorRow(errorMessage)
@@ -531,6 +559,58 @@ public struct VolumeMixerPopoverView: View {
             }
         }
         .frame(maxHeight: VolumeMixerSizing.scrollMaxHeight)
+    }
+
+    private var masterVolumeRow: some View {
+        let state = controller.masterVolumeState
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button(action: { controller.toggleMasterMute() }) {
+                    Image(systemName: masterVolumeIconName(for: state))
+                        .font(.system(size: VolumeMixerSizing.checkmarkSize, weight: .medium))
+                        .foregroundStyle(state.isMuted ? Color.red : Color.accentColor)
+                        .frame(width: 22, height: 22)
+                        .background(masterMuteButtonBackground(isSupported: state.muteSupported))
+                }
+                .buttonStyle(.plain)
+                .disabled(!state.muteSupported)
+                .onHover { isHovering in
+                    hoveredMasterMute = isHovering && state.muteSupported
+                }
+                .help(masterMuteHelp(for: state))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Master Volume")
+                        .font(.system(size: VolumeMixerSizing.bodySize, weight: .medium))
+                        .foregroundStyle(state.hasOutputDevice ? Color.primary : Color.secondary)
+                        .lineLimit(1)
+                    Text(state.volumeSupported ? state.deviceName : masterVolumeStatusText(for: state))
+                        .font(.system(size: VolumeMixerSizing.captionSize))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+                Text(state.volumeSupported ? "\(Int((state.volume * 100).rounded()))%" : "--")
+                    .font(.system(size: VolumeMixerSizing.captionSize).monospacedDigit())
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 38, alignment: .trailing)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { state.volume },
+                    set: { controller.setMasterVolume($0) }
+                ),
+                in: 0...1
+            )
+            .disabled(!state.volumeSupported)
+        }
+        .padding(.vertical, VolumeMixerSizing.rowVerticalPadding)
+        .padding(.horizontal, VolumeMixerSizing.rowHorizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(rowBackground(isActive: false))
+        .opacity(state.hasOutputDevice ? 1 : 0.72)
     }
 
     private var ignoredList: some View {
@@ -864,6 +944,11 @@ public struct VolumeMixerPopoverView: View {
             .fill(canExpand && hoveredExpandTargetID == target.id ? Color.accentColor.opacity(0.14) : Color.clear)
     }
 
+    private func masterMuteButtonBackground(isSupported: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(isSupported && hoveredMasterMute ? Color.accentColor.opacity(0.14) : Color.clear)
+    }
+
     private func subprocessList(for target: AppVolumeTarget) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(target.subprocesses) { subprocess in
@@ -1008,6 +1093,23 @@ public struct VolumeMixerPopoverView: View {
             return "speaker.wave.1.fill"
         }
         return "speaker.wave.2.fill"
+    }
+
+    private func masterVolumeIconName(for state: AppVolumeMasterVolumeState) -> String {
+        if state.isMuted {
+            return "speaker.slash.fill"
+        }
+        return appVolumeIconName(for: state.volume)
+    }
+
+    private func masterMuteHelp(for state: AppVolumeMasterVolumeState) -> String {
+        guard state.muteSupported else { return "Mute not available for this device" }
+        return state.isMuted ? "Unmute master volume" : "Mute master volume"
+    }
+
+    private func masterVolumeStatusText(for state: AppVolumeMasterVolumeState) -> String {
+        guard state.hasOutputDevice else { return "No output device" }
+        return "\(state.deviceName) volume unavailable"
     }
 
     private func outputDeviceIconName(for device: AppVolumeOutputDevice) -> String {

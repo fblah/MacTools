@@ -4,6 +4,17 @@ All notable changes to D'Monte's Toolbox are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.1] — 2026-06-09
+
+### Added
+- Disk Usage Analyzer now includes a side tree for navigating scanned folders.
+- Volume Mixer now exposes master output volume and mute controls above the app list.
+- Recently used toolbox items can be removed with a hover `x`.
+
+### Changed
+- Disk Usage Analyzer uses cached tree paths and treemap layouts for smoother navigation.
+- Video Downloader reveals the completed output file when yt-dlp reports one, falling back to the save folder.
+
 ## [0.8.0] — 2026-06-09
 
 ### Added

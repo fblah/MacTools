@@ -105,16 +105,27 @@ public final class DiskNode: Identifiable, Sendable {
 public struct DiskScanProgress: Sendable {
     public let bytesScanned: UInt64
     public let itemsScanned: Int
+    public let directoriesScanned: Int
+    public let directoriesDiscovered: Int
     public let currentPath: String
     public let inaccessibleCount: Int
 
-    public static let empty = DiskScanProgress(bytesScanned: 0, itemsScanned: 0, currentPath: "", inaccessibleCount: 0)
+    public static let empty = DiskScanProgress(
+        bytesScanned: 0,
+        itemsScanned: 0,
+        directoriesScanned: 0,
+        directoriesDiscovered: 0,
+        currentPath: "",
+        inaccessibleCount: 0
+    )
 }
 
 public final class DiskScanProgressTracker: Sendable {
     private struct State {
         var bytes: UInt64 = 0
         var items: Int = 0
+        var directories: Int = 0
+        var directoriesDiscovered: Int = 0
         var path: String = ""
         var inaccessible: Int = 0
     }
@@ -125,7 +136,14 @@ public final class DiskScanProgressTracker: Sendable {
 
     public var snapshot: DiskScanProgress {
         state.withLock {
-            DiskScanProgress(bytesScanned: $0.bytes, itemsScanned: $0.items, currentPath: $0.path, inaccessibleCount: $0.inaccessible)
+            DiskScanProgress(
+                bytesScanned: $0.bytes,
+                itemsScanned: $0.items,
+                directoriesScanned: $0.directories,
+                directoriesDiscovered: $0.directoriesDiscovered,
+                currentPath: $0.path,
+                inaccessibleCount: $0.inaccessible
+            )
         }
     }
 
@@ -142,6 +160,18 @@ public final class DiskScanProgressTracker: Sendable {
 
     func setCurrentPath(_ path: String) {
         state.withLock { $0.path = path }
+    }
+
+    func recordDirectory() {
+        state.withLock {
+            $0.directories += 1
+            $0.directoriesDiscovered = max($0.directoriesDiscovered, $0.directories)
+        }
+    }
+
+    func recordDiscoveredDirectories(_ count: Int) {
+        guard count > 0 else { return }
+        state.withLock { $0.directoriesDiscovered += count }
     }
 
     func recordInaccessible() {
@@ -339,6 +369,7 @@ public enum DiskScanner {
         }
 
         tracker?.setCurrentPath(path)
+        tracker?.recordDirectory()
 
         let result: BulkDirectoryResult
         if let preread {
@@ -371,9 +402,13 @@ public enum DiskScanner {
             }
         }
 
-        let directories = result.entries.filter {
-            $0.isDirectory && !$0.isSymlink && allowedFsids.contains($0.fsid)
+        let directories = result.entries.filter { entry in
+            entry.isDirectory
+                && !entry.isSymlink
+                && allowedFsids.contains(entry.fsid)
+                && !DiskSkipList.shouldSkip(joinPath(path, entry.name))
         }
+        tracker?.recordDiscoveredDirectories(directories.count)
 
         if depth < parallelDepth {
             let subnodes = await withTaskGroup(of: DiskNode?.self) { group in
@@ -442,6 +477,7 @@ public enum DiskScanner {
         }
 
         tracker?.setCurrentPath(path)
+        tracker?.recordDirectory()
 
         guard let result = BulkDirectoryReader.read(at: path) else {
             tracker?.recordInaccessible()
@@ -459,6 +495,10 @@ public enum DiskScanner {
             let childPath = joinPath(path, entry.name)
 
             if entry.isDirectory {
+                if DiskSkipList.shouldSkip(childPath) {
+                    continue
+                }
+                tracker?.recordDiscoveredDirectories(1)
                 if let node = await scanSerial(path: childPath, name: entry.name, allowedFsids: allowedFsids, tracker: tracker, gate: gate) {
                     children.append(node)
                     totalSize &+= node.size
@@ -490,6 +530,82 @@ public struct TreemapRect: Identifiable, Sendable {
     public init(node: DiskNode, rect: CGRect) {
         self.node = node
         self.rect = rect
+    }
+}
+
+struct DiskTreeCache {
+    let root: DiskNode
+    let pathByNodeID: [ObjectIdentifier: [DiskNode]]
+    let nodeCount: Int
+
+    init(root: DiskNode) {
+        var paths: [ObjectIdentifier: [DiskNode]] = [:]
+        var count = 0
+        Self.index(node: root, path: [], paths: &paths, count: &count)
+        self.root = root
+        self.pathByNodeID = paths
+        self.nodeCount = count
+    }
+
+    func path(to node: DiskNode) -> [DiskNode]? {
+        pathByNodeID[node.id]
+    }
+
+    private static func index(
+        node: DiskNode,
+        path: [DiskNode],
+        paths: inout [ObjectIdentifier: [DiskNode]],
+        count: inout Int
+    ) {
+        count += 1
+        let currentPath = path + [node]
+        paths[node.id] = currentPath
+        for child in node.children {
+            index(node: child, path: currentPath, paths: &paths, count: &count)
+        }
+    }
+}
+
+private struct TreemapLayoutCacheKey: Hashable, Sendable {
+    let nodeID: ObjectIdentifier
+    let width: Int
+    let height: Int
+
+    init(node: DiskNode, size: CGSize) {
+        self.nodeID = node.id
+        self.width = max(0, Int(size.width.rounded()))
+        self.height = max(0, Int(size.height.rounded()))
+    }
+}
+
+private struct TreeScrollRequest: Equatable {
+    let nodeID: ObjectIdentifier
+    let generation: Int
+}
+
+private enum DiskTreemapLayoutCacheBuilder {
+    static func build(root: DiskNode, size: CGSize) -> [TreemapLayoutCacheKey: [TreemapRect]] {
+        guard size.width > 1, size.height > 1 else { return [:] }
+        var cache: [TreemapLayoutCacheKey: [TreemapRect]] = [:]
+        appendLayouts(for: root, size: size, cache: &cache)
+        return cache
+    }
+
+    private static func appendLayouts(
+        for node: DiskNode,
+        size: CGSize,
+        cache: inout [TreemapLayoutCacheKey: [TreemapRect]]
+    ) {
+        if Task.isCancelled { return }
+
+        if !node.children.isEmpty {
+            let bounds = CGRect(origin: .zero, size: size)
+            cache[TreemapLayoutCacheKey(node: node, size: size)] = TreemapLayout.compute(nodes: node.children, in: bounds)
+        }
+
+        for child in node.children where child.isDirectory && !child.children.isEmpty {
+            appendLayouts(for: child, size: size, cache: &cache)
+        }
     }
 }
 
@@ -640,7 +756,13 @@ public struct DiskAnalyzerWindowView: View {
     @State private var volumes: [DiskVolume] = []
     @State private var selectedVolume: DiskVolume?
     @State private var pathStack: [DiskNode] = []
-    @State private var scanCache: [String: DiskNode] = [:]
+    @State private var treeCaches: [String: DiskTreeCache] = [:]
+    @State private var treemapLayoutCaches: [String: [TreemapLayoutCacheKey: [TreemapRect]]] = [:]
+    @State private var treemapLayoutTasks: [String: Task<Void, Never>] = [:]
+    @State private var treemapSize: CGSize = .zero
+    @State private var expandedTreeNodeIDs: Set<ObjectIdentifier> = []
+    @State private var treeScrollRequest: TreeScrollRequest?
+    @State private var treeScrollGeneration = 0
     @State private var scanTasks: [String: Task<Void, Never>] = [:]
     @State private var scanTrackers: [String: DiskScanProgressTracker] = [:]
     @State private var scanGenerations: [String: Int] = [:]
@@ -669,7 +791,7 @@ public struct DiskAnalyzerWindowView: View {
                     if showsFullDiskAccessHint {
                         fullDiskAccessHint
                     }
-                    treemap
+                    analyzerContent
                 }
                 .padding(.horizontal, layout.contentHorizontalPadding)
                 .padding(.bottom, layout.contentBottomPadding)
@@ -705,6 +827,9 @@ public struct DiskAnalyzerWindowView: View {
         }
         .onDisappear {
             for task in scanTasks.values {
+                task.cancel()
+            }
+            for task in treemapLayoutTasks.values {
                 task.cancel()
             }
         }
@@ -940,10 +1065,20 @@ public struct DiskAnalyzerWindowView: View {
         }
     }
 
+    private var analyzerContent: some View {
+        HStack(spacing: layout.analysisPaneSpacing) {
+            treemap
+                .layoutPriority(1)
+
+            treePane
+                .frame(width: layout.treePaneWidth)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var treemap: some View {
         GeometryReader { proxy in
-            let bounds = CGRect(origin: .zero, size: proxy.size)
-            let rects = currentNode.map { TreemapLayout.compute(nodes: $0.children, in: bounds) } ?? []
+            let rects = currentNode.map { treemapRects(for: $0, size: proxy.size) } ?? []
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: layout.treemapCornerRadius, style: .continuous)
@@ -971,6 +1106,13 @@ public struct DiskAnalyzerWindowView: View {
                             }
                             .onTapGesture(count: 2) { revealInFinder(node: entry.node) }
                             .onTapGesture { handleTap(node: entry.node) }
+                            .contextMenu {
+                                Button {
+                                    revealInFinder(node: entry.node)
+                                } label: {
+                                    Label("Show in Finder", systemImage: "folder")
+                                }
+                            }
                             .help(tooltip(for: entry.node))
                             // Use .position (not .frame+.offset): offset moves only the
                             // rendering, leaving every tile's hit region stacked at the
@@ -982,9 +1124,13 @@ public struct DiskAnalyzerWindowView: View {
                 }
 
                 if let hoveredNode {
-                    HoverChip(node: hoveredNode, layout: layout)
-                        .padding(layout.treemapInnerPadding)
-                        .allowsHitTesting(false)
+                    VStack {
+                        Spacer()
+                        HoverChip(node: hoveredNode, layout: layout)
+                            .padding(layout.treemapInnerPadding)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .allowsHitTesting(false)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: layout.treemapCornerRadius, style: .continuous))
@@ -992,8 +1138,91 @@ public struct DiskAnalyzerWindowView: View {
                 RoundedRectangle(cornerRadius: layout.treemapCornerRadius, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
             }
+            .onAppear {
+                updateTreemapSize(proxy.size)
+            }
+            .onChange(of: proxy.size) { _, newSize in
+                updateTreemapSize(newSize)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var treePane: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: layout.treePaneCornerRadius, style: .continuous)
+                .fill(Color.black.opacity(0.18))
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "list.bullet.indent")
+                        .font(.system(size: layout.treeHeaderIconSize, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text("Tree")
+                        .font(.system(size: layout.treeHeaderFontSize, weight: .bold))
+                        .foregroundStyle(.primary.opacity(0.85))
+
+                    Spacer(minLength: 0)
+
+                    if let selectedTreeCache {
+                        Text(selectedTreeCache.nodeCount.formatted())
+                            .font(.system(size: layout.treeMetaFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, layout.treePanePadding)
+                .padding(.vertical, layout.treeHeaderVerticalPadding)
+
+                Divider()
+                    .opacity(0.35)
+
+                if let root = selectedTreeCache?.root {
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                DiskTreeRow(
+                                    node: root,
+                                    depth: 0,
+                                    expandedNodeIDs: expandedTreeNodeIDs,
+                                    currentNodeID: currentNode?.id,
+                                    highlightedNodeID: hoveredNode?.id,
+                                    layout: layout,
+                                    onToggleExpand: toggleTreeExpansion,
+                                    onSelect: navigateFromTree,
+                                    onReveal: revealInFinder
+                                )
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .onChange(of: treeScrollRequest) { _, request in
+                            guard let request else { return }
+                            DispatchQueue.main.async {
+                                withAnimation(.easeOut(duration: 0.18)) {
+                                    scrollProxy.scrollTo(request.nodeID, anchor: .center)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "folder.badge.questionmark")
+                            .font(.system(size: layout.emptyIconSize * 0.68, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        Text(isScanning ? "Building tree..." : "No scan yet")
+                            .font(.system(size: layout.treeHeaderFontSize, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: layout.treePaneCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: layout.treePaneCornerRadius, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5)
+        }
     }
 
     private func centeredOverlay<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1039,6 +1268,32 @@ public struct DiskAnalyzerWindowView: View {
         pathStack.last
     }
 
+    private var selectedTreeCache: DiskTreeCache? {
+        guard let id = selectedVolume?.id else { return nil }
+        return treeCaches[id]
+    }
+
+    private func treemapRects(for node: DiskNode, size: CGSize) -> [TreemapRect] {
+        guard size.width > 1, size.height > 1 else { return [] }
+        let key = TreemapLayoutCacheKey(node: node, size: size)
+        if let id = selectedVolume?.id, let cached = treemapLayoutCaches[id]?[key] {
+            return cached
+        }
+        let bounds = CGRect(origin: .zero, size: size)
+        return TreemapLayout.compute(nodes: node.children, in: bounds)
+    }
+
+    private func updateTreemapSize(_ size: CGSize) {
+        guard size.width > 1, size.height > 1 else { return }
+        let rounded = CGSize(width: size.width.rounded(), height: size.height.rounded())
+        guard treemapSize != rounded else { return }
+        treemapSize = rounded
+
+        if let selectedVolume, let root = treeCaches[selectedVolume.id]?.root {
+            scheduleTreemapLayoutCache(for: selectedVolume.id, root: root)
+        }
+    }
+
     private var usedFraction: CGFloat {
         guard let selectedVolume, selectedVolume.totalBytes > 0 else { return 0 }
         return max(0.03, min(CGFloat(Double(selectedVolume.usedBytes) / Double(selectedVolume.totalBytes)), 1))
@@ -1067,8 +1322,11 @@ public struct DiskAnalyzerWindowView: View {
         // Drop cached results and tear down in-flight scans for volumes that
         // have gone away (e.g. an ejected external drive).
         let detectedIds = Set(detected.map(\.id))
-        for goneId in scanCache.keys where !detectedIds.contains(goneId) {
-            scanCache.removeValue(forKey: goneId)
+        for goneId in treeCaches.keys where !detectedIds.contains(goneId) {
+            treeCaches.removeValue(forKey: goneId)
+            treemapLayoutCaches.removeValue(forKey: goneId)
+            treemapLayoutTasks[goneId]?.cancel()
+            treemapLayoutTasks.removeValue(forKey: goneId)
         }
         for goneId in Array(scanTasks.keys) where !detectedIds.contains(goneId) {
             scanGates[goneId]?.resume()
@@ -1099,8 +1357,10 @@ public struct DiskAnalyzerWindowView: View {
         selectedVolume = volume
         focusScans(on: volume.id)
 
-        if let cached = scanCache[volume.id] {
-            pathStack = [cached]
+        if let cached = treeCaches[volume.id] {
+            pathStack = [cached.root]
+            expandTreePath(to: cached.root)
+            scheduleTreemapLayoutCache(for: volume.id, root: cached.root)
             return
         }
 
@@ -1114,7 +1374,10 @@ public struct DiskAnalyzerWindowView: View {
         guard let selectedVolume else { return }
         let id = selectedVolume.id
         teardownScan(for: id)
-        scanCache.removeValue(forKey: id)
+        treeCaches.removeValue(forKey: id)
+        treemapLayoutCaches.removeValue(forKey: id)
+        treemapLayoutTasks[id]?.cancel()
+        treemapLayoutTasks.removeValue(forKey: id)
         pathStack = []
         startScan(volume: selectedVolume)
     }
@@ -1148,7 +1411,10 @@ public struct DiskAnalyzerWindowView: View {
                 guard scanGenerations[volumeId] == generation else { return }
 
                 if let node {
-                    scanCache[volumeId] = node
+                    let treeCache = DiskTreeCache(root: node)
+                    treeCaches[volumeId] = treeCache
+                    expandTreePath(to: node)
+                    scheduleTreemapLayoutCache(for: volumeId, root: node)
                 }
                 if selectedVolume?.id == volumeId {
                     pathStack = node.map { [$0] } ?? []
@@ -1170,6 +1436,29 @@ public struct DiskAnalyzerWindowView: View {
         scanTrackers.removeValue(forKey: volumeId)
         scanGates.removeValue(forKey: volumeId)
         pausedVolumeIds.remove(volumeId)
+    }
+
+    private func scheduleTreemapLayoutCache(for volumeId: String, root: DiskNode) {
+        guard treemapSize.width > 1, treemapSize.height > 1 else { return }
+        let currentSize = treemapSize
+        let rootKey = TreemapLayoutCacheKey(node: root, size: currentSize)
+        if treemapLayoutCaches[volumeId]?[rootKey] != nil {
+            return
+        }
+
+        treemapLayoutTasks[volumeId]?.cancel()
+        treemapLayoutTasks[volumeId] = Task.detached(priority: .utility) {
+            let cache = DiskTreemapLayoutCacheBuilder.build(root: root, size: currentSize)
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                guard selectedVolume?.id == volumeId || treeCaches[volumeId]?.root.id == root.id else {
+                    return
+                }
+                treemapLayoutCaches[volumeId] = cache
+                treemapLayoutTasks.removeValue(forKey: volumeId)
+            }
+        }
     }
 
     /// Only the visible drive scans actively: pause every other in-flight scan
@@ -1197,12 +1486,66 @@ public struct DiskAnalyzerWindowView: View {
     }
 
     private func handleTap(node: DiskNode) {
+        expandTreePath(to: node)
+        scrollTree(to: node)
+
         guard node.isDirectory, !node.children.isEmpty else {
+            hoveredNode = node
             return
         }
 
-        pathStack.append(node)
+        if let path = selectedTreeCache?.path(to: node) {
+            pathStack = path
+        } else {
+            pathStack.append(node)
+        }
         hoveredNode = nil
+    }
+
+    private func navigateFromTree(node: DiskNode) {
+        guard let cache = selectedTreeCache, let path = cache.path(to: node) else {
+            return
+        }
+
+        expandTreePath(path)
+
+        if node.isDirectory {
+            pathStack = path
+        } else {
+            pathStack = Array(path.dropLast())
+        }
+        hoveredNode = node
+    }
+
+    private func toggleTreeExpansion(node: DiskNode) {
+        guard node.isDirectory, !node.children.isEmpty else { return }
+
+        if expandedTreeNodeIDs.contains(node.id) {
+            expandedTreeNodeIDs.remove(node.id)
+        } else {
+            expandedTreeNodeIDs.insert(node.id)
+        }
+    }
+
+    private func expandTreePath(to node: DiskNode) {
+        guard let path = selectedTreeCache?.path(to: node) else {
+            if node.isDirectory {
+                expandedTreeNodeIDs.insert(node.id)
+            }
+            return
+        }
+        expandTreePath(path)
+    }
+
+    private func expandTreePath(_ path: [DiskNode]) {
+        for node in path where node.isDirectory && !node.children.isEmpty {
+            expandedTreeNodeIDs.insert(node.id)
+        }
+    }
+
+    private func scrollTree(to node: DiskNode) {
+        treeScrollGeneration += 1
+        treeScrollRequest = TreeScrollRequest(nodeID: node.id, generation: treeScrollGeneration)
     }
 
     private func goUp() {
@@ -1223,6 +1566,9 @@ public struct DiskAnalyzerWindowView: View {
 
     private func requestQuit() {
         for task in scanTasks.values {
+            task.cancel()
+        }
+        for task in treemapLayoutTasks.values {
             task.cancel()
         }
         onQuit()
@@ -1270,6 +1616,131 @@ private struct VolumeChip: View {
             return "externaldrive.fill.badge.plus"
         }
         return volume.isInternal ? "internaldrive.fill" : "externaldrive.fill"
+    }
+}
+
+private struct DiskTreeRow: View {
+    var node: DiskNode
+    var depth: Int
+    var expandedNodeIDs: Set<ObjectIdentifier>
+    var currentNodeID: ObjectIdentifier?
+    var highlightedNodeID: ObjectIdentifier?
+    var layout: DiskAnalyzerLayout
+    var onToggleExpand: (DiskNode) -> Void
+    var onSelect: (DiskNode) -> Void
+    var onReveal: (DiskNode) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Color.clear
+                    .frame(width: CGFloat(depth) * layout.treeIndent)
+
+                Button {
+                    onToggleExpand(node)
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Color.secondary.opacity(canExpand ? 0.001 : 0))
+
+                        Image(systemName: disclosureIcon)
+                            .font(.system(size: layout.treeDisclosureSize, weight: .bold))
+                            .foregroundStyle(canExpand ? Color.secondary : Color.clear)
+                    }
+                    .frame(width: layout.treeDisclosureTapSize, height: layout.treeRowHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canExpand)
+                .help(canExpand ? (isExpanded ? "Collapse" : "Expand") : "")
+                .accessibilityLabel(isExpanded ? "Collapse \(node.name)" : "Expand \(node.name)")
+
+                HStack(spacing: 6) {
+                    Image(systemName: node.isDirectory ? "folder.fill" : "doc.fill")
+                        .font(.system(size: layout.treeIconSize, weight: .semibold))
+                        .foregroundStyle(node.isDirectory ? Color.accentColor.opacity(0.9) : .secondary)
+                        .frame(width: layout.treeIconFrame, height: layout.treeRowHeight)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(node.name)
+                            .font(.system(size: layout.treeRowFontSize, weight: isCurrent ? .bold : .semibold))
+                            .foregroundStyle(isCurrent ? Color.primary : Color.primary.opacity(0.84))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Text(node.size.diskBytesString)
+                            .font(.system(size: layout.treeRowSubFontSize, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .frame(height: layout.treeRowHeight)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onSelect(node)
+                }
+                .contextMenu {
+                    Button {
+                        onReveal(node)
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(height: layout.treeRowHeight)
+            .background(rowBackground)
+
+            if isExpanded {
+                ForEach(node.children) { child in
+                    DiskTreeRow(
+                        node: child,
+                        depth: depth + 1,
+                        expandedNodeIDs: expandedNodeIDs,
+                        currentNodeID: currentNodeID,
+                        highlightedNodeID: highlightedNodeID,
+                        layout: layout,
+                        onToggleExpand: onToggleExpand,
+                        onSelect: onSelect,
+                        onReveal: onReveal
+                    )
+                }
+            }
+        }
+        .id(node.id)
+    }
+
+    private var canExpand: Bool {
+        node.isDirectory && !node.children.isEmpty
+    }
+
+    private var disclosureIcon: String {
+        guard canExpand else { return "chevron.right" }
+        return isExpanded ? "chevron.down" : "chevron.right"
+    }
+
+    private var isExpanded: Bool {
+        expandedNodeIDs.contains(node.id)
+    }
+
+    private var isCurrent: Bool {
+        currentNodeID == node.id
+    }
+
+    private var isHighlighted: Bool {
+        highlightedNodeID == node.id
+    }
+
+    private var rowBackground: some ShapeStyle {
+        if isCurrent {
+            return Color.accentColor.opacity(0.20)
+        }
+        if isHighlighted {
+            return Color.white.opacity(0.10)
+        }
+        return Color.clear
     }
 }
 
@@ -1377,7 +1848,10 @@ private struct ScanProgressPanel: View {
         TimelineView(.periodic(from: .now, by: 0.1)) { _ in
             let progress = tracker.snapshot
             let target = max(volume?.usedBytes ?? 0, 1)
-            let fraction = min(1.0, max(0.02, Double(progress.bytesScanned) / Double(target)))
+            let estimatedRatio = Double(progress.bytesScanned) / Double(target)
+            let exceededEstimate = estimatedRatio >= 1
+            let folderFraction = directoryFraction(progress)
+            let barFraction = scanBarFraction(byteRatio: estimatedRatio, folderFraction: folderFraction)
 
             VStack(alignment: .leading, spacing: layout.summarySpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -1388,14 +1862,14 @@ private struct ScanProgressPanel: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
 
-                    Text("scanned · \(progress.itemsScanned.formatted()) items")
+                    Text(progressSummary(progress))
                         .font(.system(size: layout.summarySubFontSize, weight: .semibold))
                         .foregroundStyle(.secondary)
 
                     Spacer()
 
                     if let volume {
-                        Text("of \(volume.usedBytes.diskBytesString)")
+                        Text(estimateLabel(ratio: estimatedRatio, volume: volume))
                             .font(.system(size: layout.summarySubFontSize, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
@@ -1416,9 +1890,9 @@ private struct ScanProgressPanel: View {
                                         endPoint: .trailing
                                     )
                                 )
-                                .frame(width: proxy.size.width * CGFloat(fraction))
+                                .frame(width: proxy.size.width * CGFloat(barFraction))
                                 .opacity(isPaused ? 0.45 : 1)
-                                .animation(.easeOut(duration: 0.18), value: fraction)
+                                .animation(.easeOut(duration: 0.18), value: barFraction)
                         }
                         .frame(height: layout.summaryBarHeight)
                     }
@@ -1444,7 +1918,7 @@ private struct ScanProgressPanel: View {
                         .font(.system(size: layout.summarySubFontSize - 1, weight: .semibold))
                         .foregroundStyle(isPaused ? Color.orange : .secondary)
 
-                    Text(isPaused ? "Paused — tap play to resume" : displayPath(progress.currentPath))
+                    Text(statusLabel(progress: progress, exceededEstimate: exceededEstimate, isPaused: isPaused))
                         .font(.system(size: layout.summarySubFontSize - 1, weight: .medium, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1453,6 +1927,43 @@ private struct ScanProgressPanel: View {
                 }
             }
         }
+    }
+
+    private func progressSummary(_ progress: DiskScanProgress) -> String {
+        let discovered = max(progress.directoriesDiscovered, progress.directoriesScanned)
+        return "\(progress.itemsScanned.formatted()) items · \(progress.directoriesScanned.formatted())/\(discovered.formatted()) folders"
+    }
+
+    private func directoryFraction(_ progress: DiskScanProgress) -> Double {
+        let discovered = max(progress.directoriesDiscovered, progress.directoriesScanned, 1)
+        return min(1, max(0, Double(progress.directoriesScanned) / Double(discovered)))
+    }
+
+    private func scanBarFraction(byteRatio: Double, folderFraction: Double) -> Double {
+        if byteRatio >= 1 {
+            return min(0.995, 0.96 + (0.035 * folderFraction))
+        }
+        let byteFraction = min(1, max(0.02, byteRatio))
+        return min(0.985, byteFraction * (0.96 + (0.025 * folderFraction)))
+    }
+
+    private func estimateLabel(ratio: Double, volume: DiskVolume) -> String {
+        let percent = max(0, Int((ratio * 100).rounded()))
+        if ratio >= 1 {
+            return "\(percent)% of estimate"
+        }
+        return "\(percent)% of \(volume.usedBytes.diskBytesString) est."
+    }
+
+    private func statusLabel(progress: DiskScanProgress, exceededEstimate: Bool, isPaused: Bool) -> String {
+        if isPaused {
+            return "Paused — tap play to resume"
+        }
+        if exceededEstimate {
+            let remaining = max(0, progress.directoriesDiscovered - progress.directoriesScanned)
+            return "Scanning remaining folders · \(remaining.formatted()) known left"
+        }
+        return displayPath(progress.currentPath)
     }
 
     private func displayPath(_ path: String) -> String {
@@ -1530,7 +2041,7 @@ private struct DiskAnalyzerLayout {
     }
 
     var windowSize: NSSize { DiskAnalyzerSizing.preferredSize() }
-    var minWindowSize: NSSize { NSSize(width: 520, height: 460) }
+    var minWindowSize: NSSize { NSSize(width: 760, height: 460) }
     var sectionSpacing: CGFloat { 14 * scale }
     var contentHorizontalPadding: CGFloat { 22 * scale }
     var contentBottomPadding: CGFloat { 22 * scale }
@@ -1563,6 +2074,7 @@ private struct DiskAnalyzerLayout {
     var breadcrumbIconSize: CGFloat { 11 * scale }
     var breadcrumbFontSize: CGFloat { 13 * scale }
 
+    var analysisPaneSpacing: CGFloat { 12 * scale }
     var treemapCornerRadius: CGFloat { 10 * scale }
     var treemapInnerPadding: CGFloat { 10 * scale }
     var tileLabelFontSize: CGFloat { 11 * scale }
@@ -1575,4 +2087,20 @@ private struct DiskAnalyzerLayout {
     var hoverChipFontSize: CGFloat { 12 * scale }
     var emptyIconSize: CGFloat { 38 * scale }
     var emptyFontSize: CGFloat { 14 * scale }
+
+    var treePaneWidth: CGFloat { 250 * scale }
+    var treePaneCornerRadius: CGFloat { 10 * scale }
+    var treePanePadding: CGFloat { 10 * scale }
+    var treeHeaderVerticalPadding: CGFloat { 9 * scale }
+    var treeHeaderIconSize: CGFloat { 13 * scale }
+    var treeHeaderFontSize: CGFloat { 13 * scale }
+    var treeMetaFontSize: CGFloat { 10.5 * scale }
+    var treeRowHeight: CGFloat { 34 * scale }
+    var treeIndent: CGFloat { 12 * scale }
+    var treeDisclosureSize: CGFloat { 9 * scale }
+    var treeDisclosureTapSize: CGFloat { 28 * scale }
+    var treeIconSize: CGFloat { 12 * scale }
+    var treeIconFrame: CGFloat { 16 * scale }
+    var treeRowFontSize: CGFloat { 11.5 * scale }
+    var treeRowSubFontSize: CGFloat { 9.5 * scale }
 }

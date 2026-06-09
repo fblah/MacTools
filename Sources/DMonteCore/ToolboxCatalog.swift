@@ -93,6 +93,12 @@ public enum ToolboxRecentTools {
         defaults.set(Array(updatedIDs.prefix(maxCount)), forKey: DefaultsKey.toolboxRecentToolIDs)
     }
 
+    public static func remove(toolID: String, in defaults: UserDefaults) {
+        let storedIDs = defaults.stringArray(forKey: DefaultsKey.toolboxRecentToolIDs) ?? []
+        let updatedIDs = uniqueIDs(from: storedIDs).filter { $0 != toolID }
+        defaults.set(Array(updatedIDs.prefix(maxCount)), forKey: DefaultsKey.toolboxRecentToolIDs)
+    }
+
     private static func uniqueIDs(from ids: [String]) -> [String] {
         var seenIDs = Set<String>()
         return ids.filter { id in
