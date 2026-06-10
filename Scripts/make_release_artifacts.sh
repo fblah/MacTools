@@ -154,7 +154,6 @@ cat > "$APPCAST_PATH" <<XML
       <link>https://github.com/$REPOSITORY/releases/tag/$TAG_NAME</link>
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-      <sparkle:releaseNotesLink>https://github.com/$REPOSITORY/releases/tag/$TAG_NAME</sparkle:releaseNotesLink>
       <description sparkle:format="plain-text">$release_notes_xml</description>
       <pubDate>$pub_date</pubDate>
       <enclosure
