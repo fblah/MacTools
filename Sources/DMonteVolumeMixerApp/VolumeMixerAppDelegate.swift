@@ -2,25 +2,44 @@ import AppKit
 import DMonteCore
 import SwiftUI
 
-private final class KeyablePanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 @MainActor
 final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
     private static let showWindowNotification =
         Notification.Name("com.havokentity.mactools.volumemixer.showWindow")
 
     private var statusItem: NSStatusItem?
-    private var panel: KeyablePanel?
+    private var panelHost: HelperPanelHost?
     private var controller: AppVolumeMixerController?
-    private var outsideClickMonitor: Any?
-    private var showWindowObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
         controller = AppVolumeMixerController()
+
+        let host = HelperPanelHost(
+            configuration: HelperPanelHost.Configuration(
+                styleMask: [.borderless, .nonactivatingPanel],
+                isFloatingPanel: nil,
+                hidesOnDeactivate: nil,
+                isReleasedWhenClosed: nil,
+                creation: .onFirstShow,
+                sizing: .fixedAtCreation(
+                    NSSize(width: VolumeMixerSizing.panelWidth, height: VolumeMixerSizing.panelHeight)
+                ),
+                activation: .orderFrontThenActivate,
+                clickMonitorInstall: .immediate,
+                positioning: .anchoredOriginRawBounds(gap: 8)
+            ),
+            content: .view({ [weak self] in
+                let controller = self?.controller ?? AppVolumeMixerController()
+                self?.controller = controller
+                let content = VolumeMixerPopoverView(controller: controller, onQuit: {
+                    self?.quit()
+                })
+                return NSHostingView(rootView: content)
+            }),
+            anchorView: { [weak self] in self?.statusItem?.button }
+        )
+        panelHost = host
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -36,15 +55,11 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
         }
         self.statusItem = statusItem
 
-        showWindowObserver = DistributedNotificationCenter.default().addObserver(
-            forName: Self.showWindowNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.showPopover()
-            }
-        }
+        // The host's outside-click monitor install is idempotent, which matters here:
+        // show can run not only from togglePopover() (which guards on panel visibility)
+        // but also from the second-instance distributed-notification path
+        // (`main.swift --open`) while the panel may already be visible.
+        host.observeShowNotification(named: Self.showWindowNotification)
     }
 
     @objc private func togglePopover() {
@@ -54,95 +69,7 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if let panel, panel.isVisible {
-            closePopover()
-        } else {
-            showPopover()
-        }
-    }
-
-    private func showPopover() {
-        let panelToShow: KeyablePanel
-        if let existing = panel {
-            panelToShow = existing
-        } else {
-            let newPanel = makePanel()
-            panel = newPanel
-            panelToShow = newPanel
-        }
-
-        positionPanel(panelToShow)
-        panelToShow.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        addOutsideClickMonitor()
-    }
-
-    private func closePopover() {
-        if let monitor = outsideClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            outsideClickMonitor = nil
-        }
-        panel?.orderOut(nil)
-    }
-
-    private func makePanel() -> KeyablePanel {
-        let controller = controller ?? AppVolumeMixerController()
-        self.controller = controller
-        let content = VolumeMixerPopoverView(controller: controller, onQuit: { [weak self] in
-            self?.quit()
-        })
-        let hosting = NSHostingView(rootView: content)
-        hosting.wantsLayer = true
-        hosting.layer?.cornerRadius = 18
-        hosting.layer?.cornerCurve = .continuous
-        hosting.layer?.masksToBounds = true
-
-        let panel = KeyablePanel(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: VolumeMixerSizing.panelWidth,
-                height: VolumeMixerSizing.panelHeight
-            ),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.contentView = hosting
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        return panel
-    }
-
-    private func positionPanel(_ panel: KeyablePanel) {
-        guard let button = statusItem?.button, let screen = button.window?.screen else { return }
-        let buttonFrame = button.window?.convertToScreen(button.bounds) ?? .zero
-        var x = buttonFrame.midX - VolumeMixerSizing.panelWidth / 2
-        var y = buttonFrame.minY - 8 - VolumeMixerSizing.panelHeight
-        let visible = screen.visibleFrame
-        x = max(visible.minX + 8, min(x, visible.maxX - VolumeMixerSizing.panelWidth - 8))
-        if y < visible.minY + 8 { y = visible.minY + 8 }
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    @objc private func addOutsideClickMonitor() {
-        // Idempotent: showPopover() runs not only from togglePopover() (which
-        // guards on panel visibility) but also from the second-instance
-        // distributed-notification path (`main.swift --open`) while the panel
-        // may already be visible. Re-adding without this guard would
-        // overwrite the handle and permanently leak the previous global
-        // monitor. closePopover()/cleanup() remove the monitor and nil the
-        // handle, keeping add/remove symmetric.
-        guard outsideClickMonitor == nil else { return }
-        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.closePopover()
-            }
-        }
+        panelHost?.toggle()
     }
 
     private func quit() {
@@ -152,14 +79,8 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
 
     private func cleanup() {
         controller?.stopProcessing()
-        if let monitor = outsideClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            outsideClickMonitor = nil
-        }
-        if let observer = showWindowObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-            showWindowObserver = nil
-        }
+        panelHost?.removeOutsideClickMonitor()
+        panelHost?.stopObservingShowNotifications()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
