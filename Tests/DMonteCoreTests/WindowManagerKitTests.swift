@@ -127,4 +127,28 @@ final class WindowManagerKitTests: XCTestCase {
         let twice = WindowManagerController.axRect(fromCocoa: once)
         XCTAssertEqual(twice, cocoa)
     }
+
+    func testPureAXRectConversionIsAnInvolution() {
+        let cocoa = CGRect(x: -2560, y: 0, width: 2560, height: 1440)
+        let once = WindowManagerKit.axRect(fromCocoa: cocoa, primaryScreenHeight: 1440)
+        let twice = WindowManagerKit.axRect(fromCocoa: once, primaryScreenHeight: 1440)
+        XCTAssertEqual(twice, cocoa)
+        XCTAssertEqual(once, CGRect(x: -2560, y: 0, width: 2560, height: 1440))
+    }
+
+    func testPureAXRectConversionFlipsAboveAndBelowScreens() {
+        // A screen ABOVE the primary (cocoa y = primary height) lands at negative AX y.
+        let above = WindowManagerKit.axRect(
+            fromCocoa: CGRect(x: 0, y: 1440, width: 1920, height: 1080),
+            primaryScreenHeight: 1440
+        )
+        XCTAssertEqual(above, CGRect(x: 0, y: -1080, width: 1920, height: 1080))
+
+        // A screen BELOW the primary (negative cocoa y) lands below in AX space (y = primary height).
+        let below = WindowManagerKit.axRect(
+            fromCocoa: CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+            primaryScreenHeight: 1440
+        )
+        XCTAssertEqual(below, CGRect(x: 0, y: 1440, width: 1920, height: 1080))
+    }
 }

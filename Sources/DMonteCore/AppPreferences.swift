@@ -60,6 +60,7 @@ public enum DefaultsKey {
     public static let volumeMixerSmartFilter = "tool.volumeMixer.smartFilter"
     public static let volumeMixerIncludedDefaultIgnoredApps = "tool.volumeMixer.includedDefaultIgnoredApps"
     public static let volumeMixerOutputRoutes = "tool.volumeMixer.outputRoutes"
+    public static let windowManagerShortcuts = "tool.windowManager.shortcuts"
     public static let toolboxRecentToolIDs = "toolbox.recentToolIDs"
 
     static let obsoleteKeys = [
@@ -97,6 +98,7 @@ public enum AppDefaults {
             DefaultsKey.volumeMixerSmartFilter: true,
             DefaultsKey.volumeMixerIncludedDefaultIgnoredApps: [],
             DefaultsKey.volumeMixerOutputRoutes: [:],
+            DefaultsKey.windowManagerShortcuts: [:],
             DefaultsKey.toolboxRecentToolIDs: [],
             DefaultsKey.focusTimerFocusMinutes: 25,
             DefaultsKey.focusTimerShortBreakMinutes: 5,

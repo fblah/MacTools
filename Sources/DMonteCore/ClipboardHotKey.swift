@@ -1,6 +1,26 @@
 import Carbon.HIToolbox
 import Foundation
 
+/// Why a `GlobalHotKey` registration failed — surfaced so callers can tell the user *which*
+/// shortcut could not be claimed and why, instead of dropping the failure on the floor.
+public enum GlobalHotKeyRegistrationError: Error, Equatable, Sendable {
+    /// The per-process Carbon id is already live (a caller forgot to release the old key first).
+    case duplicateID
+    /// The shared Carbon event handler could not be installed.
+    case eventHandlerUnavailable
+    /// `RegisterEventHotKey` itself failed; the OSStatus says why (e.g. -9878
+    /// `eventHotKeyExistsErr` when another process holds the combo exclusively).
+    case registrationFailed(OSStatus)
+}
+
+/// Whether some process currently holds Secure Event Input (password fields, the lock screen,
+/// or — notoriously — a stuck `loginwindow` after unlocking). While it is held, the system
+/// suppresses *all* Carbon hotkey delivery even though registration succeeds, so surfacing this
+/// is the difference between "the app is broken" and "macOS is blocking shortcuts right now".
+public enum SecureInputState {
+    public static var isBlockingHotKeys: Bool { IsSecureEventInputEnabled() }
+}
+
 /// A process-wide hotkey registered with Carbon's `RegisterEventHotKey`, which works from a
 /// background (accessory) app without Accessibility permission. The handler fires on the main
 /// thread (Carbon dispatches on the main run loop).
@@ -40,13 +60,36 @@ public final class GlobalHotKey {
     ///   registers more than one hotkey (e.g. Window Manager's snap shortcuts) must pass a
     ///   distinct `id` per key — registering an `id` that is already live fails (returns `nil`).
     ///   The default of `1` keeps existing single-hotkey callers unchanged.
-    public init?(keyCode: UInt32, modifiers: UInt32, id: UInt32 = 1, handler: @escaping @Sendable () -> Void) {
+    ///
+    /// Returns `nil` on any failure; callers that need to know *why* (to surface "shortcut in
+    /// use" in the UI) should use `register(keyCode:modifiers:id:handler:)` instead.
+    public convenience init?(keyCode: UInt32, modifiers: UInt32, id: UInt32 = 1, handler: @escaping @Sendable () -> Void) {
+        do {
+            try self.init(registering: keyCode, modifiers: modifiers, id: id, handler: handler)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Failure-surfacing factory: like `init?`, but throws `GlobalHotKeyRegistrationError` so the
+    /// caller can record the OSStatus and tell the user which shortcut could not be claimed.
+    public static func register(
+        keyCode: UInt32,
+        modifiers: UInt32,
+        id: UInt32 = 1,
+        handler: @escaping @Sendable () -> Void
+    ) throws -> GlobalHotKey {
+        try GlobalHotKey(registering: keyCode, modifiers: modifiers, id: id, handler: handler)
+    }
+
+    private init(registering keyCode: UInt32, modifiers: UInt32, id: UInt32, handler: @escaping @Sendable () -> Void) throws {
         self.id = id
 
         // A duplicate id would make the dispatch table ambiguous (both keys routed to one
         // handler — the very bug the registry exists to prevent), so refuse it up front.
         // `hotKeyRef` is still nil here, so deinit won't disturb the existing entry.
-        guard Self.handlersByID[id] == nil, Self.installSharedHandlerIfNeeded() else { return nil }
+        guard Self.handlersByID[id] == nil else { throw GlobalHotKeyRegistrationError.duplicateID }
+        guard Self.installSharedHandlerIfNeeded() else { throw GlobalHotKeyRegistrationError.eventHandlerUnavailable }
 
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
         let registerStatus = RegisterEventHotKey(
@@ -60,7 +103,7 @@ public final class GlobalHotKey {
 
         guard registerStatus == noErr else {
             hotKeyRef = nil
-            return nil
+            throw GlobalHotKeyRegistrationError.registrationFailed(registerStatus)
         }
 
         Self.handlersByID[id] = handler
