@@ -1,5 +1,6 @@
 import AppKit
 import DMonteCore
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -10,7 +11,24 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
     private var panelHost: HelperPanelHost?
     private var hotKey: GlobalHotKey?
     private var keyMonitor: Any?
-    private weak var lastActiveApp: NSRunningApplication?
+
+    /// History of app activations so the paste target can be "the app the user was typing in
+    /// before the status-item click" — with separate Spaces that click spuriously re-activates
+    /// the topmost app on the panel's display, sometimes *before* `onWillShow` runs. The tracker
+    /// owns the skip logic and freezes the history while the panel is open; see
+    /// `ActivationTracker` for the full story. Only our own activations are excluded (no suite
+    /// filtering: pasting into the Toolbox or another helper is legitimate).
+    private let activationTracker: ActivationTracker
+
+    private static let log = Logger(subsystem: ClipboardMonitor.bundleIdentifier, category: "paste-target")
+
+    override init() {
+        activationTracker = ActivationTracker(
+            logger: ClipboardAppDelegate.log,
+            excluding: { $0.bundleIdentifier == ClipboardMonitor.bundleIdentifier }
+        )
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
@@ -24,13 +42,12 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
         configurePanelHost()
         configureStatusItem()
         panelHost?.observeShowNotification(named: HelperNotifications.showClipboardWindow)
-        observeActiveApp()
         registerHotKey()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         panelHost?.stopObservingShowNotifications()
-        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        activationTracker.stopObserving()
         panelHost?.removeOutsideClickMonitor()
         removeKeyMonitor()
         hotKey = nil
@@ -56,14 +73,19 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
         )
         host.onWillShow = { [weak self] in
             guard let self else { return }
-            // The app to paste into is whatever was frontmost just before we appeared.
-            self.controller.pasteTarget = self.lastActiveApp ?? NSWorkspace.shared.frontmostApplication
+            // The app to paste into is whatever the user was working in just before we
+            // appeared — resolved from the activation history, frozen for this session.
+            let target = self.activationTracker.resolveTarget() ?? NSWorkspace.shared.frontmostApplication
+            self.activationTracker.beginSession()
+            self.controller.pasteTarget = target
+            Self.log.info("paste target: \(target?.localizedName ?? "none", privacy: .public)")
             self.controller.prepareForShow()
         }
         host.onDidShow = { [weak self] in
             self?.installKeyMonitor()
         }
         host.onDidClose = { [weak self] in
+            self?.activationTracker.endSession()
             self?.removeKeyMonitor()
         }
         panelHost = host
@@ -80,15 +102,6 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func observeActiveApp() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(activeAppChanged(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
-    }
-
     private func registerHotKey() {
         // Release the old key before creating its replacement: GlobalHotKey refuses
         // duplicate ids, and plain reassignment constructs the new key while the old
@@ -99,14 +112,6 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
                 self?.panelHost?.toggle()
             }
         }
-    }
-
-    @objc private func activeAppChanged(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              app.bundleIdentifier != ClipboardMonitor.bundleIdentifier else {
-            return
-        }
-        lastActiveApp = app
     }
 
     // MARK: - Key monitor
