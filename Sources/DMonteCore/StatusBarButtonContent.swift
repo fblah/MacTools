@@ -87,8 +87,13 @@ public enum StatusBarButtonContent {
         }
     }
 
-    /// Shows a lightweight right-click context menu for a status item while preserving the
-    /// normal left-click action used by popovers/windows.
+    /// Shows a lightweight context menu for a status item on right-click or control+left-click
+    /// (the canonical macOS right-click equivalent, and the only option on some trackpad
+    /// configurations) while preserving the plain left-click action used by popovers/windows.
+    ///
+    /// Callers wire the button with `sendAction(on: [.leftMouseUp, .rightMouseUp])` (see the
+    /// `install` helpers above), so a control+left-click reaches this function as a left-mouse
+    /// event carrying `.control` in its modifier flags rather than as a right-mouse event.
     @MainActor
     public static func popUpQuitMenuIfNeeded(
         for item: NSStatusItem?,
@@ -96,10 +101,16 @@ public enum StatusBarButtonContent {
         quitTitle: String = "Quit",
         action: @escaping () -> Void
     ) -> Bool {
-        guard let eventType = NSApp.currentEvent?.type,
-              eventType == .rightMouseDown || eventType == .rightMouseUp,
+        guard let event = NSApp.currentEvent,
               let item,
               let button = item.button else {
+            return false
+        }
+
+        let isRightClick = event.type == .rightMouseDown || event.type == .rightMouseUp
+        let isControlLeftClick = (event.type == .leftMouseDown || event.type == .leftMouseUp)
+            && event.modifierFlags.contains(.control)
+        guard isRightClick || isControlLeftClick else {
             return false
         }
 

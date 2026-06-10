@@ -4,10 +4,27 @@ import Foundation
 /// A process-wide hotkey registered with Carbon's `RegisterEventHotKey`, which works from a
 /// background (accessory) app without Accessibility permission. The handler fires on the main
 /// thread (Carbon dispatches on the main run loop).
+///
+/// All instances share a single Carbon event handler (installed lazily when the first key
+/// registers). The shared callback reads the fired `EventHotKeyID` off the event and routes to
+/// the matching key's handler, so a process can register many hotkeys — a per-instance handler
+/// that ignores the event id would swallow every hotkey press with the first-installed handler.
 public final class GlobalHotKey {
     private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
-    private let handler: @Sendable () -> Void
+    private let id: UInt32
+
+    /// Four-char code 'CLIP' — the signature half of Carbon's `(signature, id)` hotkey key.
+    /// The shared callback only handles events carrying this signature.
+    private static let signature = OSType(0x434C_4950 /* 'CLIP' */)
+
+    // Registry of live hotkey handlers keyed by Carbon id, plus the one shared Carbon handler.
+    // `nonisolated(unsafe)` is justified because every access is main-thread-only: Carbon
+    // dispatches hotkey events on the main run loop, and init/deinit run from main-thread
+    // owners (app delegates / @MainActor controllers). Storing the closure (not the instance)
+    // means the registry never keeps a GlobalHotKey alive beyond its owner; deinit removes the
+    // entry. Internal (not private) so dispatch routing is unit-testable without real hotkeys.
+    nonisolated(unsafe) static var handlersByID: [UInt32: @Sendable () -> Void] = [:]
+    nonisolated(unsafe) private static var sharedEventHandler: EventHandlerRef?
 
     /// ⇧⌘V — the default summon shortcut, matching Paste/Pastebot.
     public static func commandShiftV(handler: @escaping @Sendable () -> Void) -> GlobalHotKey? {
@@ -19,35 +36,19 @@ public final class GlobalHotKey {
     }
 
     /// - Parameter id: A per-process-unique identifier. Carbon keys each registration by
-    ///   `(signature, id)`, so a process that registers more than one hotkey (e.g. Window
-    ///   Manager's snap shortcuts) must pass a distinct `id` per key or later registrations
-    ///   silently fail. The default of `1` keeps existing single-hotkey callers unchanged.
+    ///   `(signature, id)` and the shared callback routes the event by `id`, so a process that
+    ///   registers more than one hotkey (e.g. Window Manager's snap shortcuts) must pass a
+    ///   distinct `id` per key — registering an `id` that is already live fails (returns `nil`).
+    ///   The default of `1` keeps existing single-hotkey callers unchanged.
     public init?(keyCode: UInt32, modifiers: UInt32, id: UInt32 = 1, handler: @escaping @Sendable () -> Void) {
-        self.handler = handler
+        self.id = id
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        // A duplicate id would make the dispatch table ambiguous (both keys routed to one
+        // handler — the very bug the registry exists to prevent), so refuse it up front.
+        // `hotKeyRef` is still nil here, so deinit won't disturb the existing entry.
+        guard Self.handlersByID[id] == nil, Self.installSharedHandlerIfNeeded() else { return nil }
 
-        let selfPointer = Unmanaged.passUnretained(self).toOpaque()
-        let installStatus = InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, userData -> OSStatus in
-                guard let userData else { return noErr }
-                let hotKey = Unmanaged<GlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
-                hotKey.handler()
-                return noErr
-            },
-            1,
-            &eventType,
-            selfPointer,
-            &eventHandlerRef
-        )
-
-        guard installStatus == noErr else { return nil }
-
-        let hotKeyID = EventHotKeyID(signature: OSType(0x434C_4950 /* 'CLIP' */), id: id)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
         let registerStatus = RegisterEventHotKey(
             keyCode,
             modifiers,
@@ -58,19 +59,72 @@ public final class GlobalHotKey {
         )
 
         guard registerStatus == noErr else {
-            if let eventHandlerRef {
-                RemoveEventHandler(eventHandlerRef)
-            }
+            hotKeyRef = nil
             return nil
         }
+
+        Self.handlersByID[id] = handler
     }
 
     deinit {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-        }
-        if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
-        }
+        // A nil hotKeyRef means init failed before inserting into the registry — nothing to
+        // undo (and the id may belong to another live key).
+        guard let hotKeyRef else { return }
+        Self.handlersByID[id] = nil
+        UnregisterEventHotKey(hotKeyRef)
+    }
+
+    // MARK: - Shared dispatch
+
+    /// Routes a fired hotkey to its registered handler. Returns `true` if the event matched a
+    /// live key (signature and id) and its handler ran. Factored out of the Carbon callback so
+    /// the routing decision is unit-testable without registering real hotkeys.
+    static func dispatch(signature: OSType, id: UInt32) -> Bool {
+        guard signature == Self.signature, let handler = handlersByID[id] else { return false }
+        handler()
+        return true
+    }
+
+    /// Installs the one process-wide Carbon handler for `kEventHotKeyPressed` on first use.
+    /// It is intentionally never removed: it costs nothing while the registry is empty, and
+    /// removing/reinstalling around the last/first key would only add states to get wrong.
+    private static func installSharedHandlerIfNeeded() -> Bool {
+        if sharedEventHandler != nil { return true }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, _ -> OSStatus in
+                guard let event else { return OSStatus(eventNotHandledErr) }
+
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr else { return OSStatus(eventNotHandledErr) }
+
+                // Return eventNotHandledErr for ids we don't know so the event propagates to
+                // any other handlers in the process instead of being silently swallowed.
+                return GlobalHotKey.dispatch(signature: hotKeyID.signature, id: hotKeyID.id)
+                    ? noErr
+                    : OSStatus(eventNotHandledErr)
+            },
+            1,
+            &eventType,
+            nil,
+            &sharedEventHandler
+        )
+
+        return installStatus == noErr
     }
 }

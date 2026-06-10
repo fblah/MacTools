@@ -557,6 +557,11 @@ struct DiskTreeCache {
         paths: inout [ObjectIdentifier: [DiskNode]],
         count: inout Int
     ) {
+        // The cache is built on a detached task (see scheduleTreeCacheBuild) because a
+        // boot volume holds millions of nodes. Bail per-node when that task is
+        // cancelled — a superseded build's partial result is discarded by its caller,
+        // so there is no point finishing the walk.
+        if Task.isCancelled { return }
         count += 1
         let currentPath = path + [node]
         paths[node.id] = currentPath
@@ -757,6 +762,7 @@ public struct DiskAnalyzerWindowView: View {
     @State private var selectedVolume: DiskVolume?
     @State private var pathStack: [DiskNode] = []
     @State private var treeCaches: [String: DiskTreeCache] = [:]
+    @State private var treeCacheBuildTasks: [String: Task<Void, Never>] = [:]
     @State private var treemapLayoutCaches: [String: [TreemapLayoutCacheKey: [TreemapRect]]] = [:]
     @State private var treemapLayoutTasks: [String: Task<Void, Never>] = [:]
     @State private var treemapSize: CGSize = .zero
@@ -827,6 +833,9 @@ public struct DiskAnalyzerWindowView: View {
         }
         .onDisappear {
             for task in scanTasks.values {
+                task.cancel()
+            }
+            for task in treeCacheBuildTasks.values {
                 task.cancel()
             }
             for task in treemapLayoutTasks.values {
@@ -1210,7 +1219,7 @@ public struct DiskAnalyzerWindowView: View {
                             .font(.system(size: layout.emptyIconSize * 0.68, weight: .semibold))
                             .foregroundStyle(.secondary)
 
-                        Text(isScanning ? "Building tree..." : "No scan yet")
+                        Text(isScanning || isIndexingTree ? "Building tree..." : "No scan yet")
                             .font(.system(size: layout.treeHeaderFontSize, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -1233,6 +1242,13 @@ public struct DiskAnalyzerWindowView: View {
     private var isScanning: Bool {
         guard let id = selectedVolume?.id else { return false }
         return scanTasks[id] != nil
+    }
+
+    /// True while the navigation index for the selected volume is still being built
+    /// off the main actor (the window between scan completion and the cache commit).
+    private var isIndexingTree: Bool {
+        guard let id = selectedVolume?.id else { return false }
+        return treeCacheBuildTasks[id] != nil
     }
 
     private var scanTracker: DiskScanProgressTracker? {
@@ -1328,6 +1344,14 @@ public struct DiskAnalyzerWindowView: View {
             treemapLayoutTasks[goneId]?.cancel()
             treemapLayoutTasks.removeValue(forKey: goneId)
         }
+        // Tree index builds are keyed separately from treeCaches: a volume removed
+        // while its index is still building has no treeCaches entry yet, so the loop
+        // above never sees it. Cancel those builds here or they would run to
+        // completion for a volume that no longer exists.
+        for goneId in Array(treeCacheBuildTasks.keys) where !detectedIds.contains(goneId) {
+            treeCacheBuildTasks[goneId]?.cancel()
+            treeCacheBuildTasks.removeValue(forKey: goneId)
+        }
         for goneId in Array(scanTasks.keys) where !detectedIds.contains(goneId) {
             scanGates[goneId]?.resume()
             scanTasks[goneId]?.cancel()
@@ -1364,7 +1388,11 @@ public struct DiskAnalyzerWindowView: View {
         }
 
         pathStack = []
-        if scanTasks[volume.id] == nil {
+        // A finished scan may still be indexing its tree off the main actor; treat
+        // that window as "scan in progress" so re-selecting the volume doesn't kick
+        // off a redundant full rescan. The pending build settles the path stack onto
+        // the root when it commits (see scheduleTreeCacheBuild).
+        if scanTasks[volume.id] == nil, treeCacheBuildTasks[volume.id] == nil {
             startScan(volume: volume)
         }
     }
@@ -1374,6 +1402,8 @@ public struct DiskAnalyzerWindowView: View {
         let id = selectedVolume.id
         teardownScan(for: id)
         treeCaches.removeValue(forKey: id)
+        treeCacheBuildTasks[id]?.cancel()
+        treeCacheBuildTasks.removeValue(forKey: id)
         treemapLayoutCaches.removeValue(forKey: id)
         treemapLayoutTasks[id]?.cancel()
         treemapLayoutTasks.removeValue(forKey: id)
@@ -1409,8 +1439,12 @@ public struct DiskAnalyzerWindowView: View {
                 guard scanGenerations[volumeId] == generation else { return }
 
                 if let node {
-                    let treeCache = DiskTreeCache(root: node)
-                    treeCaches[volumeId] = treeCache
+                    // Indexing the tree for navigation touches every node and is far
+                    // too expensive for the main actor on big volumes, so it runs
+                    // detached (see scheduleTreeCacheBuild) just like the treemap
+                    // layout cache below. The path stack needs neither cache, so the
+                    // treemap results appear immediately while the indexes build.
+                    scheduleTreeCacheBuild(for: volumeId, root: node, generation: generation)
                     expandTreePath(to: node)
                     scheduleTreemapLayoutCache(for: volumeId, root: node)
                 }
@@ -1436,6 +1470,57 @@ public struct DiskAnalyzerWindowView: View {
         pausedVolumeIds.remove(volumeId)
     }
 
+    /// Builds the navigation index (DiskTreeCache) for a completed scan off the main
+    /// actor. The index walks every node in the tree building per-node ancestor paths
+    /// (O(nodes x depth)); a boot volume holds millions of nodes, and constructing it
+    /// inside the scan-completion MainActor.run froze the UI for seconds right when
+    /// results should appear. Mirrors scheduleTreemapLayoutCache: detached build, then
+    /// a main-actor commit that is discarded when stale — a rescan bumps the volume's
+    /// scan generation and unmounting removes the volume from `volumes`, so either
+    /// event invalidates a pending result (the task itself is also cancelled by
+    /// rescan() and refreshVolumes(), but cancellation is cooperative and can lose the
+    /// race, so the commit re-checks).
+    private func scheduleTreeCacheBuild(for volumeId: String, root: DiskNode, generation: Int) {
+        treeCacheBuildTasks[volumeId]?.cancel()
+        treeCacheBuildTasks[volumeId] = Task.detached(priority: .userInitiated) {
+            let cache = DiskTreeCache(root: root)
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                // Clear the bookkeeping entry on every exit path — a stale build that
+                // skips the commit below must not leave a dead task in the map.
+                treeCacheBuildTasks.removeValue(forKey: volumeId)
+
+                guard scanGenerations[volumeId] == generation,
+                      volumes.contains(where: { $0.id == volumeId }) else {
+                    return
+                }
+
+                treeCaches[volumeId] = cache
+                expandTreePath(to: root)
+
+                // If the user re-selected this volume while the index was building,
+                // select(volume:) left the path stack empty (it skips the rescan but
+                // has no cache to navigate yet) — settle it on the root now. Never
+                // clobber a non-empty stack: the treemap is navigable without the
+                // index, so the user may already have drilled somewhere.
+                if selectedVolume?.id == volumeId, pathStack.isEmpty {
+                    pathStack = [root]
+                }
+
+                // The treemap commit below drops its result when this volume is
+                // neither selected nor present in treeCaches — a window this build
+                // created by deferring the treeCaches assignment. If that race
+                // discarded the layouts (its task entry is gone and the cache check
+                // in scheduleTreemapLayoutCache misses), schedule a replacement; if
+                // the layouts landed or the build is still in flight, this is a no-op.
+                if treemapLayoutTasks[volumeId] == nil {
+                    scheduleTreemapLayoutCache(for: volumeId, root: root)
+                }
+            }
+        }
+    }
+
     private func scheduleTreemapLayoutCache(for volumeId: String, root: DiskNode) {
         guard treemapSize.width > 1, treemapSize.height > 1 else { return }
         let currentSize = treemapSize
@@ -1450,11 +1535,14 @@ public struct DiskAnalyzerWindowView: View {
             if Task.isCancelled { return }
 
             await MainActor.run {
+                // Clear the bookkeeping entry on every exit path — a stale build that
+                // skips the commit below must not leave a dead task in the map.
+                treemapLayoutTasks.removeValue(forKey: volumeId)
+
                 guard selectedVolume?.id == volumeId || treeCaches[volumeId]?.root.id == root.id else {
                     return
                 }
                 treemapLayoutCaches[volumeId] = cache
-                treemapLayoutTasks.removeValue(forKey: volumeId)
             }
         }
     }
@@ -1551,6 +1639,9 @@ public struct DiskAnalyzerWindowView: View {
 
     private func requestQuit() {
         for task in scanTasks.values {
+            task.cancel()
+        }
+        for task in treeCacheBuildTasks.values {
             task.cancel()
         }
         for task in treemapLayoutTasks.values {
@@ -1822,6 +1913,90 @@ private struct ScanningView: View {
     }
 }
 
+/// Pure arithmetic behind the scan progress panel, extracted from the view so it can
+/// be pinned by tests — this math already shipped a >100% display bug (fixed in 0.8.6
+/// with no regression test) because it was unreachable inside a private view.
+///
+/// The model: bytes scanned vs. the volume's used-byte estimate drive the bulk of the
+/// fraction, with the folder ratio (directories scanned / discovered) contributing a
+/// small tail. Once the byte estimate is exceeded (byteRatio >= 1 — purgeable space,
+/// hard links and snapshots make the estimate unreliable) the math switches to a
+/// folder-driven regime that creeps from 0.96 toward the 0.995 bar cap, so the bar
+/// never sits pinned at 100% while work clearly remains.
+///
+/// Known cosmetic quirk, pinned by tests rather than redesigned: in the exceeded
+/// regime the bar can tick BACKWARD when new directories are discovered, because the
+/// folder fraction's denominator grows while its numerator hasn't caught up yet.
+enum DiskScanProgressMath {
+    /// Fraction of the volume's used-byte estimate scanned so far. The estimate can
+    /// be zero (e.g. an unreadable volume), so the denominator is floored at 1.
+    /// Deliberately NOT clamped to 1: values >= 1 are how callers detect the
+    /// exceeded-estimate regime.
+    static func byteRatio(scannedBytes: UInt64, estimatedBytes: UInt64) -> Double {
+        Double(scannedBytes) / Double(max(estimatedBytes, 1))
+    }
+
+    /// The regime switch: once we've scanned at least as many bytes as the estimate,
+    /// byte-based progress is meaningless and the folder ratio takes over. Kept here
+    /// so the panel's label logic and the fraction math can never drift apart.
+    static func exceededEstimate(byteRatio: Double) -> Bool {
+        byteRatio >= 1
+    }
+
+    /// Directories scanned over directories discovered, clamped to [0, 1]. Discovered
+    /// can momentarily lag scanned (the tracker increments them independently), which
+    /// is exactly the input that produced the old >100% display — hence the
+    /// max(discovered, scanned, 1) denominator.
+    static func directoryFraction(directoriesScanned: Int, directoriesDiscovered: Int) -> Double {
+        let discovered = max(directoriesDiscovered, directoriesScanned, 1)
+        return min(1, max(0, Double(directoriesScanned) / Double(discovered)))
+    }
+
+    /// Overall scan fraction for the percent label and the bar. Below the estimate,
+    /// bytes dominate and folders nudge the slope (cap 0.985 so the label maxes at
+    /// 98%); at or beyond it, the shared exceeded-regime curve takes over.
+    static func scanProgressFraction(byteRatio: Double, folderFraction: Double) -> Double {
+        if exceededEstimate(byteRatio: byteRatio) {
+            return exceededRegimeFraction(folderFraction: folderFraction)
+        }
+
+        let boundedByteFraction = min(1, max(0, byteRatio))
+        let boundedFolderFraction = min(1, max(0, folderFraction))
+        return min(0.985, boundedByteFraction * (0.96 + (0.025 * boundedFolderFraction)))
+    }
+
+    /// Fraction actually drawn by the bar: the scan fraction with a 0.02 visibility
+    /// floor so the bar never looks empty once a scan is underway. In the exceeded
+    /// regime it is the same curve as scanProgressFraction — delegating (rather than
+    /// repeating the expression) is what keeps the two from drifting apart again.
+    static func scanBarFraction(byteRatio: Double, folderFraction: Double) -> Double {
+        if exceededEstimate(byteRatio: byteRatio) {
+            return exceededRegimeFraction(folderFraction: folderFraction)
+        }
+        return min(0.985, max(0.02, scanProgressFraction(byteRatio: byteRatio, folderFraction: folderFraction)))
+    }
+
+    /// Whole percent for the estimate label, floored (never rounds up to a milestone
+    /// not yet reached) and capped at 99 — the panel disappears when the scan
+    /// finishes, so 100% would only ever show as a lie.
+    static func displayPercent(scanFraction: Double) -> Int {
+        min(99, max(0, Int((scanFraction * 100).rounded(.down))))
+    }
+
+    /// Directories known but not yet scanned, clamped at zero for the same
+    /// discovered-lags-scanned input that motivated directoryFraction's clamp.
+    static func remainingDirectories(directoriesScanned: Int, directoriesDiscovered: Int) -> Int {
+        max(0, directoriesDiscovered - directoriesScanned)
+    }
+
+    /// Shared exceeded-estimate curve: folder progress maps onto the narrow
+    /// 0.96...0.995 band so the bar visibly creeps but can't reach full. This is the
+    /// regime where the backward-tick quirk lives (see the type comment).
+    private static func exceededRegimeFraction(folderFraction: Double) -> Double {
+        min(0.995, 0.96 + (0.035 * min(1, max(0, folderFraction))))
+    }
+}
+
 private struct ScanProgressPanel: View {
     var tracker: DiskScanProgressTracker
     var volume: DiskVolume?
@@ -1831,13 +2006,20 @@ private struct ScanProgressPanel: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+            // All numeric progress math lives in DiskScanProgressMath so it stays
+            // testable; this view only assembles labels and draws the bar.
             let progress = tracker.snapshot
-            let target = max(volume?.usedBytes ?? 0, 1)
-            let estimatedRatio = Double(progress.bytesScanned) / Double(target)
-            let exceededEstimate = estimatedRatio >= 1
-            let folderFraction = directoryFraction(progress)
-            let scanFraction = scanProgressFraction(byteRatio: estimatedRatio, folderFraction: folderFraction)
-            let barFraction = scanBarFraction(scanFraction: scanFraction, exceededEstimate: exceededEstimate, folderFraction: folderFraction)
+            let byteRatio = DiskScanProgressMath.byteRatio(
+                scannedBytes: progress.bytesScanned,
+                estimatedBytes: volume?.usedBytes ?? 0
+            )
+            let exceededEstimate = DiskScanProgressMath.exceededEstimate(byteRatio: byteRatio)
+            let folderFraction = DiskScanProgressMath.directoryFraction(
+                directoriesScanned: progress.directoriesScanned,
+                directoriesDiscovered: progress.directoriesDiscovered
+            )
+            let scanFraction = DiskScanProgressMath.scanProgressFraction(byteRatio: byteRatio, folderFraction: folderFraction)
+            let barFraction = DiskScanProgressMath.scanBarFraction(byteRatio: byteRatio, folderFraction: folderFraction)
 
             VStack(alignment: .leading, spacing: layout.summarySpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -1920,31 +2102,8 @@ private struct ScanProgressPanel: View {
         return "\(progress.itemsScanned.formatted()) items · \(progress.directoriesScanned.formatted())/\(discovered.formatted()) folders"
     }
 
-    private func directoryFraction(_ progress: DiskScanProgress) -> Double {
-        let discovered = max(progress.directoriesDiscovered, progress.directoriesScanned, 1)
-        return min(1, max(0, Double(progress.directoriesScanned) / Double(discovered)))
-    }
-
-    private func scanProgressFraction(byteRatio: Double, folderFraction: Double) -> Double {
-        let boundedByteFraction = min(1, max(0, byteRatio))
-        let boundedFolderFraction = min(1, max(0, folderFraction))
-
-        if byteRatio >= 1 {
-            return min(0.995, 0.96 + (0.035 * boundedFolderFraction))
-        }
-
-        return min(0.985, boundedByteFraction * (0.96 + (0.025 * boundedFolderFraction)))
-    }
-
-    private func scanBarFraction(scanFraction: Double, exceededEstimate: Bool, folderFraction: Double) -> Double {
-        if exceededEstimate {
-            return min(0.995, 0.96 + (0.035 * folderFraction))
-        }
-        return min(0.985, max(0.02, scanFraction))
-    }
-
     private func estimateLabel(scanFraction: Double, exceededEstimate: Bool, volume: DiskVolume) -> String {
-        let percent = min(99, max(0, Int((scanFraction * 100).rounded(.down))))
+        let percent = DiskScanProgressMath.displayPercent(scanFraction: scanFraction)
         if exceededEstimate {
             return "\(percent)% scanned"
         }
@@ -1956,7 +2115,10 @@ private struct ScanProgressPanel: View {
             return "Paused — tap play to resume"
         }
         if exceededEstimate {
-            let remaining = max(0, progress.directoriesDiscovered - progress.directoriesScanned)
+            let remaining = DiskScanProgressMath.remainingDirectories(
+                directoriesScanned: progress.directoriesScanned,
+                directoriesDiscovered: progress.directoriesDiscovered
+            )
             return "Scanning remaining folders · \(remaining.formatted()) known left"
         }
         return displayPath(progress.currentPath)

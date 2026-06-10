@@ -130,6 +130,14 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func addOutsideClickMonitor() {
+        // Idempotent: showPopover() runs not only from togglePopover() (which
+        // guards on panel visibility) but also from the second-instance
+        // distributed-notification path (`main.swift --open`) while the panel
+        // may already be visible. Re-adding without this guard would
+        // overwrite the handle and permanently leak the previous global
+        // monitor. closePopover()/cleanup() remove the monitor and nil the
+        // handle, keeping add/remove symmetric.
+        guard outsideClickMonitor == nil else { return }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.closePopover()

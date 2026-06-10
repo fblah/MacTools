@@ -573,8 +573,12 @@ public struct CleanDriveWindowView: View {
 
         // While cleaning, the orange fill represents what is left to remove and unfills as
         // data is deleted; otherwise it reflects how much of the drive's junk is selected.
+        // The cleaning denominator must be the bytes selected for THIS clean
+        // (cleaningTotalBytes), not the total junk on the system: startCleaning() snaps the
+        // bar to full, so dividing by totalSize made a partial selection plunge from 1 to
+        // selected/total on the first progress event instead of draining full -> empty.
         if isCleaning {
-            return min(1, Double(remainingBytes) / Double(totalSize))
+            return min(1, Double(remainingBytes) / Double(max(cleaningTotalBytes, 1)))
         }
 
         return max(0.04, min(Double(selectedSize) / Double(totalSize), 1))

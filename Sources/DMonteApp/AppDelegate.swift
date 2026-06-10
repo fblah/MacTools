@@ -27,9 +27,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
+        // Force the lazy updater into existence at launch: Sparkle's scheduled
+        // automatic checks (SUEnableAutomaticChecks/SUScheduledCheckInterval) only
+        // start once SPUStandardUpdaterController is instantiated.
+        _ = updaterController
+        migrateHelperLoginItemsIfNeeded()
         configureToolboxPopover()
         configureToolboxStatusItem()
         configureToolboxShowNotifications()
+    }
+
+    /// The "DMonte Toolbox.app" → "DMonte Tool Box.app" rename (the installer deletes the
+    /// legacy bundle) left existing LaunchAgents pointing at a dead helper path, and the
+    /// helpers only rewrite their own agent when they run — which launchd can no longer do.
+    /// Repair them from the main app instead: compute the path each helper's own
+    /// `Bundle.main.executableURL` would report inside the *current* bundle and rewrite any
+    /// installed agent that is stale. Silent and nearly free when nothing needs migrating.
+    private func migrateHelperLoginItemsIfNeeded() {
+        if let clipboardPath = bundledHelperExecutablePath(toolID: "clipboard") {
+            ClipboardLoginItem.migrateInstalledAgentIfNeeded(toExecutablePath: clipboardPath)
+        }
+
+        if let systemMonitorPath = bundledHelperExecutablePath(toolID: "systemMonitor") {
+            SystemMonitorLoginItem.migrateInstalledAgentIfNeeded(toExecutablePath: systemMonitorPath)
+        }
+    }
+
+    /// Mirrors the layout `Scripts/package_app.sh` produces and that a running helper's
+    /// `Bundle.main.executableURL` resolves to: Contents/Helpers/<App>.app/Contents/MacOS/<exe>.
+    private func bundledHelperExecutablePath(toolID: String) -> String? {
+        guard let tool = ToolboxCatalog.all.first(where: { $0.id == toolID }) else {
+            return nil
+        }
+
+        return bundledHelperURL(appName: tool.appName)?
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("MacOS")
+            .appendingPathComponent(tool.executableName)
+            .path
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -239,7 +274,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
     private func bringSparkleModalToFront() {
         prepareForSparkleModal()
 
+        // Only promote Sparkle's own windows (SU-prefixed classes such as SUUpdateAlert /
+        // SUStatusController). NSApp.windows also contains the always-visible
+        // NSStatusBarWindow hosting the tray icon — demoting that from status-bar level to
+        // .modalPanel and reordering it front is exactly the "disappearing tray icon" bug
+        // class commit 1e04345 fixed. As a safety belt, also skip any window already above
+        // .normal (status-bar and other elevated windows don't need our help). Sparkle's
+        // windows close themselves when the update interaction ends, so restoring their
+        // level afterward is unnecessary.
         for window in NSApp.windows where window !== toolboxPanel && window.isVisible {
+            guard String(describing: type(of: window)).hasPrefix("SU"),
+                  window.level.rawValue <= NSWindow.Level.normal.rawValue else {
+                continue
+            }
+
             window.level = .modalPanel
             window.makeKeyAndOrderFront(nil)
         }

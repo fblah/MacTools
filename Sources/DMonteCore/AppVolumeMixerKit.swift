@@ -3,6 +3,7 @@ import Accelerate
 import CoreAudio
 import Darwin
 import Foundation
+import os.lock
 
 public struct AppVolumeSubprocess: Identifiable, Sendable, Equatable {
     public let processID: pid_t
@@ -45,8 +46,31 @@ public struct AppVolumeTarget: Identifiable, Sendable, Equatable {
     public var id: String { stableKey }
 
     public var stableKey: String {
+        Self.stableKey(
+            processID: processID,
+            bundleIdentifier: bundleIdentifier,
+            displayName: displayName
+        )
+    }
+
+    /// Single source of truth for the persistence key used by gains, pins,
+    /// ignores, and output routes. Both `stableKey` and the kit's discovery
+    /// path derive keys from here so the write and read schemes cannot drift.
+    /// Prefers the bundle identifier; bundle-less audio processes (mpv,
+    /// afplay, bare binaries) fall back to `name:<displayName>` so their
+    /// settings survive relaunches; `pid:` is a last resort for processes
+    /// with no usable name. (Keys previously written as `pid:<pid>` for
+    /// bundle-less apps were never matched on read, so no migration applies.)
+    public static func stableKey(
+        processID: pid_t,
+        bundleIdentifier: String?,
+        displayName: String?
+    ) -> String {
         if let bundleIdentifier, !bundleIdentifier.isEmpty {
             return bundleIdentifier
+        }
+        if let displayName, !displayName.isEmpty {
+            return "name:\(displayName)"
         }
         return "pid:\(processID)"
     }
@@ -269,11 +293,52 @@ public struct AppVolumeMixerSessionState: Sendable, Equatable {
 }
 
 public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
+    /// Gain shared between the main thread (writer, via `setGain`) and the
+    /// realtime HAL IO proc (reader). A plain `var Float` touched from both
+    /// threads is a data race — UB under the memory model, trips TSan, and
+    /// the compiler may hoist the load out of the render loop — so access is
+    /// guarded by an `os_unfair_lock` (macOS 14 target; the Synchronization
+    /// module's `Atomic` is unavailable). The writer locks unconditionally;
+    /// the render thread only *tries* the lock, because a realtime audio
+    /// thread must never block: waiting on a lock held by the (preemptible)
+    /// main thread is a priority inversion and a missed render deadline is an
+    /// audible glitch. On a failed trylock it reuses the last gain it
+    /// successfully read — that cache is render-thread-local, so it needs no
+    /// synchronization of its own.
     private final class RenderState: @unchecked Sendable {
-        var gain: Float
+        private var gain: Float
+        /// Read and written only by the realtime IO proc thread.
+        private var lastRenderGain: Float
+        /// Heap-allocated so the lock has a stable address; an inline struct
+        /// stored property could be moved/copied by Swift value semantics.
+        private let lock: UnsafeMutablePointer<os_unfair_lock>
 
         init(gain: Float) {
             self.gain = gain
+            self.lastRenderGain = gain
+            self.lock = UnsafeMutablePointer<os_unfair_lock>.allocate(capacity: 1)
+            self.lock.initialize(to: os_unfair_lock())
+        }
+
+        deinit {
+            lock.deinitialize(count: 1)
+            lock.deallocate()
+        }
+
+        /// Writer side (main thread).
+        func setGain(_ value: Float) {
+            os_unfair_lock_lock(lock)
+            gain = value
+            os_unfair_lock_unlock(lock)
+        }
+
+        /// Reader side; call only from the realtime IO proc. Never blocks.
+        func renderGain() -> Float {
+            if os_unfair_lock_trylock(lock) {
+                lastRenderGain = gain
+                os_unfair_lock_unlock(lock)
+            }
+            return lastRenderGain
         }
     }
 
@@ -284,7 +349,12 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
     private var renderStatePointer: UnsafeMutableRawPointer?
     private(set) public var activeTargetID: String?
     private(set) public var activeAudioObjectIDs: [AudioObjectID] = []
+    /// Resolved device UIDs the engine is actually playing through.
     private(set) public var activeOutputUIDs: [String] = []
+    /// The route as requested in `start(target:gain:outputUIDs:)`, before
+    /// resolution (`[]` means "System Default"). Keep-alive checks compare
+    /// against this, not `activeOutputUIDs`, which always holds resolved UIDs.
+    private(set) public var requestedOutputUIDs: [String] = []
 
     public init() {}
 
@@ -300,6 +370,7 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
         guard !target.audioObjectIDs.isEmpty else {
             throw AppVolumeMixerError.noActiveAppAudio
         }
+        let requestedOutputUIDs = outputUIDs
         let hasCustomOutputRoute = !outputUIDs.isEmpty
         let outputDevices = Self.routedOutputDevices(outputUIDs: outputUIDs)
         guard let primaryOutput = outputDevices.first else {
@@ -316,11 +387,21 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
             preferDeviceScopedTap: true,
             allowStereoMixdownFallback: !hasCustomOutputRoute
         )
-        let aggregateID = try Self.createAggregateDevice(
-            target: target,
-            tapUUID: tap.description.uuid,
-            outputUIDs: outputUIDs
-        )
+        let aggregateID: AudioObjectID
+        do {
+            aggregateID = try Self.createAggregateDevice(
+                target: target,
+                tapUUID: tap.description.uuid,
+                outputUIDs: outputUIDs
+            )
+        } catch {
+            // The tap was already created in the HAL; without this it leaks
+            // on every failed aggregate creation — and the 2-second
+            // reconciler retries start(), accumulating leaked tap objects.
+            // (The later failure paths below clean up both the same way.)
+            AppVolumeMixerKit.destroyTap(tap.id)
+            throw error
+        }
 
         let statePointer = Unmanaged.passRetained(state).toOpaque()
         var ioProcID: AudioDeviceIOProcID?
@@ -354,10 +435,11 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
         self.activeTargetID = target.id
         self.activeAudioObjectIDs = target.audioObjectIDs
         self.activeOutputUIDs = outputUIDs
+        self.requestedOutputUIDs = requestedOutputUIDs
     }
 
     public func setGain(_ gain: Float) {
-        renderState?.gain = AppVolumeTarget.clampGain(gain)
+        renderState?.setGain(AppVolumeTarget.clampGain(gain))
     }
 
     public func stop() {
@@ -385,6 +467,7 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
         activeTargetID = nil
         activeAudioObjectIDs = []
         activeOutputUIDs = []
+        requestedOutputUIDs = []
     }
 
     @available(macOS 14.2, *)
@@ -487,6 +570,16 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
         return selected.isEmpty ? availableOutputs.filter(\.isDefault).prefix(1).map { $0 } : selected
     }
 
+    /// Resolves the device UIDs that `start(target:gain:outputUIDs:)` would
+    /// route through right now for the given requested route (`[]` means
+    /// "System Default"). Lets callers detect, without restarting the engine,
+    /// whether a running engine's `activeOutputUIDs` still match what the
+    /// requested route resolves to — e.g. after the default output device
+    /// changes or a routed device is plugged/unplugged.
+    static func resolvedOutputUIDs(forRequestedOutputUIDs outputUIDs: [String]) -> [String] {
+        routedOutputDevices(outputUIDs: outputUIDs).map(\.uid)
+    }
+
     private static func sourceOutputDevice() -> AppVolumeOutputDevice? {
         guard let defaultOutputID = AudioDeviceKit.defaultOutputDeviceID(),
               let uid = AudioDeviceKit.uid(for: defaultOutputID),
@@ -564,7 +657,7 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
             return noErr
         }
         let state = Unmanaged<RenderState>.fromOpaque(clientData).takeUnretainedValue()
-        render(inputData: inputData, outputData: outputData, gain: state.gain)
+        render(inputData: inputData, outputData: outputData, gain: state.renderGain())
         return noErr
     }
 
@@ -968,7 +1061,11 @@ public enum AppVolumeMixerKit {
                 displayName: subprocessName,
                 isRunningOutput: isRunningOutput
             )
-            let key = stableKey(processID: parentPID, bundleIdentifier: bundleID, displayName: displayName)
+            let key = AppVolumeTarget.stableKey(
+                processID: parentPID,
+                bundleIdentifier: bundleID,
+                displayName: displayName
+            )
 
             if var existing = discoveredByKey[key] {
                 if !existing.subprocesses.contains(where: { $0.audioObjectID == audioObjectID }) {
@@ -1025,7 +1122,7 @@ public enum AppVolumeMixerKit {
                 appsByPID: appsByPID
             )
 
-            let key = stableKey(
+            let key = AppVolumeTarget.stableKey(
                 processID: identity.processID,
                 bundleIdentifier: identity.bundleIdentifier,
                 displayName: identity.displayName
@@ -1448,24 +1545,6 @@ public enum AppVolumeMixerKit {
             return name
         }
         return fallbackURL?.deletingPathExtension().lastPathComponent
-    }
-
-    private static func stableKey(processID: pid_t, bundleIdentifier: String?) -> String {
-        stableKey(processID: processID, bundleIdentifier: bundleIdentifier, displayName: nil)
-    }
-
-    private static func stableKey(
-        processID: pid_t,
-        bundleIdentifier: String?,
-        displayName: String?
-    ) -> String {
-        if let bundleIdentifier, !bundleIdentifier.isEmpty {
-            return bundleIdentifier
-        }
-        if let displayName, !displayName.isEmpty {
-            return "name:\(displayName)"
-        }
-        return "pid:\(processID)"
     }
 
     private static func displayName(

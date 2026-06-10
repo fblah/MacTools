@@ -39,6 +39,17 @@ public final class AppVolumeMixerController: ObservableObject {
     @Published public private(set) var smartFilter: Bool
 
     private var audioEngines: [String: AppVolumeMixerAudioEngine] = [:]
+    /// Pre-mute gain stash per stableKey so unmuting restores the user's
+    /// level instead of jumping to 100%. Session-scoped by design (not
+    /// persisted); absent or ~silent entries fall back to full volume.
+    private var preMuteGains: [String: Float] = [:]
+    /// Per-target manual processing override, keyed by stableKey:
+    /// `true`  = user pressed play — force processing on, even at unity gain;
+    /// `false` = user pressed stop — never auto-restart.
+    /// Absent  = automatic policy (see `shouldRunProcessing`).
+    /// A force-off is cleared when the user adjusts that target's gain — the
+    /// natural "re-engage" gesture. Session-scoped by design.
+    private var manualProcessingOverrides: [String: Bool] = [:]
     private var refreshTask: Task<Void, Never>?
     private var refreshWorkTask: Task<Void, Never>?
     private var refreshRequestID = 0
@@ -116,6 +127,14 @@ public final class AppVolumeMixerController: ObservableObject {
         localIgnoredAppCount = snapshot.localIgnoredAppCount
         defaultIgnoredOverrideCount = snapshot.defaultIgnoredOverrideCount
         let activeTargetIDs = Set(refreshedTargets.filter(\.isActive).map(\.id))
+        // KNOWN STRUCTURAL LIMIT: when a process disappears from the active
+        // target list entirely (its audio session fully torn down — distinct
+        // from a mere output pause, which keeps the target active and is
+        // handled by `shouldRunProcessing`), its engine must be reaped here:
+        // the tapped process objects no longer exist. If such an app later
+        // resumes audio it plays unprocessed at full volume for up to one
+        // ~2s poll cycle until rediscovery restarts the engine. Do not "fix"
+        // this by keeping the engine — there is nothing left to tap.
         let staleEngineIDs = audioEngines.keys.filter { !activeTargetIDs.contains($0) }
         for id in staleEngineIDs {
             audioEngines[id]?.stop()
@@ -165,12 +184,27 @@ public final class AppVolumeMixerController: ObservableObject {
     public func setGain(_ gain: Float, for target: AppVolumeTarget) {
         let clamped = AppVolumeTarget.clampGain(gain)
         scheduleGainPersistence(clamped, forKey: target.stableKey)
+        // Adjusting the gain after a manual stop is the natural re-engage
+        // gesture — the user wants attenuation again — so return the target
+        // to automatic policy. A force-on is deliberately left in place: it
+        // agrees with what the slider asks for and keeps processing pinned
+        // even if the slider returns to unity gain.
+        if manualProcessingOverrides[target.stableKey] == false {
+            manualProcessingOverrides.removeValue(forKey: target.stableKey)
+        }
         if let engine = audioEngines[target.id] {
             engine.setGain(clamped)
         }
         if target.isActive {
-            if target.isRunningOutput && (clamped < 0.999 || !outputRouteUIDs(for: target).isEmpty) {
-                ensureProcessing(for: target, reportError: true)
+            if Self.shouldRunProcessing(
+                isActive: true,
+                gain: clamped,
+                hasCustomRoute: !outputRouteUIDs(for: target).isEmpty,
+                manualOverride: manualProcessingOverrides[target.stableKey]
+            ) {
+                // Pass the target carrying the new gain so a freshly started
+                // engine begins at the dragged level, not the previous value.
+                ensureProcessing(for: targetWithGain(target, gain: clamped), reportError: true)
             } else {
                 stopProcessing(for: target.id)
             }
@@ -183,6 +217,26 @@ public final class AppVolumeMixerController: ObservableObject {
             activeTargetIDs: Set(audioEngines.keys),
             errorMessage: sessionState.errorMessage
         )
+    }
+
+    /// Per-app mute toggle. Muting stashes the current level so unmuting can
+    /// restore it instead of jumping to 100%; the stash is session-scoped.
+    public func toggleMute(for target: AppVolumeTarget) {
+        let key = target.stableKey
+        if target.gain <= 0.001 {
+            setGain(Self.unmuteRestoreGain(stashed: preMuteGains.removeValue(forKey: key)), for: target)
+        } else {
+            preMuteGains[key] = target.gain
+            setGain(0, for: target)
+        }
+    }
+
+    /// Gain to restore on unmute: the stashed pre-mute level, falling back to
+    /// full volume when nothing was stashed or the stash is itself ~silent
+    /// (restoring ~0 would leave the unmute button doing nothing audible).
+    nonisolated static func unmuteRestoreGain(stashed: Float?) -> Float {
+        guard let stashed, stashed > 0.001 else { return 1 }
+        return AppVolumeTarget.clampGain(stashed)
     }
 
     public func outputRouteUIDs(for target: AppVolumeTarget) -> [String] {
@@ -219,9 +273,14 @@ public final class AppVolumeMixerController: ObservableObject {
 
     public func toggleProcessing(for target: AppVolumeTarget) {
         if audioEngines[target.id] != nil {
+            // Row stop button: force-off so the 2-second reconciler does not
+            // undo the stop while the target is still attenuated/routed.
+            manualProcessingOverrides[target.stableKey] = false
             stopProcessing(for: target.id)
             return
         }
+        // Row play button: force-on so processing sticks even at unity gain.
+        manualProcessingOverrides[target.stableKey] = true
         ensureProcessing(for: target, reportError: true)
     }
 
@@ -280,6 +339,13 @@ public final class AppVolumeMixerController: ObservableObject {
     }
 
     public func stopProcessing() {
+        // Footer "Stop processing" button: an explicit user gesture, so mark
+        // every currently-processing target force-off — otherwise the
+        // 2-second reconciler would restart the attenuated ones immediately.
+        // (Engine keys are target ids, which are stableKeys.)
+        for id in audioEngines.keys {
+            manualProcessingOverrides[id] = false
+        }
         for engine in audioEngines.values {
             engine.stop()
         }
@@ -298,22 +364,57 @@ public final class AppVolumeMixerController: ObservableObject {
         }
     }
 
-    private func reconcileAutoProcessing() {
-        for target in targets where target.isActive && target.isRunningOutput && (target.gain < 0.999 || !outputRouteUIDs(for: target).isEmpty) {
-            ensureProcessing(for: target, reportError: false)
+    /// Pure reconcile predicate: should this target's engine be running?
+    /// Centralizes the policy shared by the 2-second reconciler and
+    /// `setGain(_:for:)` so manual play/stop overrides and the "keep engines
+    /// for paused apps" rule cannot drift apart.
+    ///
+    /// Policy:
+    /// - Inactive targets (no tappable audio session) never process.
+    /// - A manual override always wins: a force-off target is never
+    ///   auto-started and a force-on target is never auto-stopped.
+    /// - Otherwise process exactly when the target is attenuated
+    ///   (gain < 0.999) or custom-routed.
+    /// - `isRunningOutput` is deliberately NOT an input: a tap on a process
+    ///   that has merely paused output renders silence, and keeping the
+    ///   engine alive while paused is what makes resume seamless (no ~2s
+    ///   full-volume blast to the default device while the poll catches up).
+    ///   The cost — the aggregate's IO proc idling while the app is paused —
+    ///   is acceptable for attenuated/routed targets.
+    nonisolated static func shouldRunProcessing(
+        isActive: Bool,
+        gain: Float,
+        hasCustomRoute: Bool,
+        manualOverride: Bool?
+    ) -> Bool {
+        guard isActive else { return false }
+        if let manualOverride {
+            return manualOverride
         }
-        let targetIDsToStop = Set(targets.filter { target in
-            target.gain >= 0.999 || !target.isRunningOutput
-        }.filter { target in
-            !target.isRunningOutput || outputRouteUIDs(for: target).isEmpty
-        }.map(\.id))
-        for id in targetIDsToStop where audioEngines[id] != nil {
-            stopProcessing(for: id, keepError: true)
+        return gain < 0.999 || hasCustomRoute
+    }
+
+    private func reconcileAutoProcessing() {
+        for target in targets {
+            if Self.shouldRunProcessing(
+                isActive: target.isActive,
+                gain: target.gain,
+                hasCustomRoute: !outputRouteUIDs(for: target).isEmpty,
+                manualOverride: manualProcessingOverrides[target.stableKey]
+            ) {
+                ensureProcessing(for: target, reportError: false)
+            } else if audioEngines[target.id] != nil {
+                stopProcessing(for: target.id, keepError: true)
+            }
         }
     }
 
     private func ensureProcessing(for target: AppVolumeTarget, reportError: Bool) {
-        guard target.isActive, target.isRunningOutput else {
+        // Only `isActive` is required (not `isRunningOutput`): starting or
+        // keeping an engine for a paused-but-active app just renders silence,
+        // and is exactly what keeps a resume attenuated instead of blasting
+        // at full volume for up to ~2s. See `shouldRunProcessing`.
+        guard target.isActive else {
             if reportError {
                 sessionState = AppVolumeMixerSessionState(
                     activeTargetIDs: Set(audioEngines.keys),
@@ -323,9 +424,15 @@ public final class AppVolumeMixerController: ObservableObject {
             return
         }
         let routeUIDs = outputRouteUIDs(for: target)
+        // Keep the engine when the requested route is unchanged AND it still
+        // resolves to the devices the engine is playing through. Re-resolving
+        // here is what picks up default-output switches and plug/unplug events
+        // (there are no HAL property listeners; everything rides this poll) —
+        // a changed resolution forces a restart within one refresh cycle.
         if let engine = audioEngines[target.id],
            engine.activeAudioObjectIDs == target.audioObjectIDs,
-           engine.activeOutputUIDs == routeUIDs {
+           engine.requestedOutputUIDs == routeUIDs,
+           engine.activeOutputUIDs == AppVolumeMixerAudioEngine.resolvedOutputUIDs(forRequestedOutputUIDs: routeUIDs) {
             engine.setGain(target.gain)
             return
         }
@@ -678,9 +785,7 @@ public struct VolumeMixerPopoverView: View {
                     hoveredExpandTargetID = isHovering && canExpand ? target.id : (hoveredExpandTargetID == target.id ? nil : hoveredExpandTargetID)
                 }
                 .help(canExpand ? "Show audio processes" : "No audio processes yet")
-                Button(action: {
-                    controller.setGain(target.gain <= 0.001 ? 1 : 0, for: target)
-                }) {
+                Button(action: { controller.toggleMute(for: target) }) {
                     Image(systemName: appVolumeIconName(for: target.gain))
                         .font(.system(size: VolumeMixerSizing.checkmarkSize, weight: .medium))
                         .foregroundStyle(target.gain <= 0.001 ? Color.red : Color.accentColor)

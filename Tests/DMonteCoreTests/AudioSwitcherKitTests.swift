@@ -92,16 +92,86 @@ final class AudioSwitcherKitTests: XCTestCase {
         XCTAssertEqual(target.stableKey, "com.example.Player")
     }
 
-    func testAppVolumeTargetFallsBackToPIDIdentity() {
+    func testAppVolumeTargetFallsBackToNameIdentity() {
+        // Bundle-less audio processes (mpv, afplay, bare binaries) key on
+        // their display name so gains/pins survive relaunches under new PIDs.
         let target = AppVolumeTarget(
             processID: 123,
             audioObjectID: 456,
             bundleIdentifier: nil,
-            displayName: "Process 123",
+            displayName: "mpv",
             isRunningOutput: true,
             gain: 0.7
         )
-        XCTAssertEqual(target.id, "pid:123")
+        XCTAssertEqual(target.id, "name:mpv")
+        XCTAssertEqual(target.stableKey, "name:mpv")
+    }
+
+    func testStableKeySchemesAgree() {
+        // `AppVolumeTarget.stableKey` (the write path) and the shared static
+        // key function (used by the kit's discovery/read path) must agree,
+        // or persisted gains and pins silently reset every refresh.
+        let withBundleID = AppVolumeTarget(
+            processID: 123,
+            audioObjectID: 456,
+            bundleIdentifier: "com.example.Player",
+            displayName: "Player",
+            isRunningOutput: true,
+            gain: 1
+        )
+        XCTAssertEqual(
+            withBundleID.stableKey,
+            AppVolumeTarget.stableKey(
+                processID: 123,
+                bundleIdentifier: "com.example.Player",
+                displayName: "Player"
+            )
+        )
+
+        let withoutBundleID = AppVolumeTarget(
+            processID: 123,
+            audioObjectID: 456,
+            bundleIdentifier: nil,
+            displayName: "mpv",
+            isRunningOutput: true,
+            gain: 1
+        )
+        XCTAssertEqual(
+            withoutBundleID.stableKey,
+            AppVolumeTarget.stableKey(processID: 123, bundleIdentifier: nil, displayName: "mpv")
+        )
+        XCTAssertEqual(withoutBundleID.stableKey, "name:mpv")
+
+        // PID fallback only remains for processes with no usable name.
+        XCTAssertEqual(
+            AppVolumeTarget.stableKey(processID: 123, bundleIdentifier: "", displayName: ""),
+            "pid:123"
+        )
+        XCTAssertEqual(
+            AppVolumeTarget.stableKey(processID: 123, bundleIdentifier: nil, displayName: nil),
+            "pid:123"
+        )
+    }
+
+    func testAppVolumeGainRoundTripsForTargetWithoutBundleIdentifier() {
+        let suiteName = "AppVolumeMixerTests-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        defer {
+            suite.removePersistentDomain(forName: suiteName)
+        }
+        let target = AppVolumeTarget(
+            processID: 321,
+            audioObjectID: 654,
+            bundleIdentifier: nil,
+            displayName: "mpv",
+            isRunningOutput: true,
+            gain: 1
+        )
+
+        AppVolumeMixerKit.setGain(0.5, for: target, defaults: suite)
+
+        XCTAssertEqual(AppVolumeMixerKit.gain(for: target, defaults: suite), 0.5)
+        XCTAssertEqual(AppVolumeMixerKit.persistedGains(defaults: suite)["name:mpv"], 0.5)
     }
 
     func testAppVolumeGainPersistenceClampsValues() {
