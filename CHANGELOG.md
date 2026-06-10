@@ -4,6 +4,37 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.8] — 2026-06-10
+
+### Added
+- Window Manager: keyboard shortcuts are remappable — click a shortcut in the
+  new Keyboard Shortcuts section, press the new combo, done. Includes reset to
+  defaults, duplicate prevention, and clear notices when a shortcut can't
+  register or when macOS secure input is blocking hotkeys system-wide.
+- Window Manager: the popover shows "Will snap: <app>" so the target window is
+  always visible before clicking a tile.
+
+### Fixed
+- Window Manager: snapping targets the window you were just working in, even
+  when the popover is opened from a different display's menu bar (macOS moves
+  focus to that display's topmost app with separate Spaces enabled).
+- Window Manager: windows that were manually resized smaller now snap to the
+  full half/corner size; apps flagged by assistive or automation software
+  (AXEnhancedUserInterface) no longer silently ignore the resize.
+- Clipboard: pasting goes to the app you were working in before opening the
+  panel, fixing wrong-app pastes when summoning the clipboard from another
+  display.
+- Tool Box: quitting while an update is staged for install no longer risks
+  aborting the installation.
+
+### Changed
+- All helper tools now share one window/panel implementation instead of
+  near-identical copies, shrinking the codebase and making panel behavior
+  uniform across tools.
+- Release pipeline hygiene: signing secrets are scoped to only the steps that
+  need them, the build keychain uses a random password and is cleaned up after
+  every run, and CI actions are pinned to commit hashes.
+
 ## [0.8.7] — 2026-06-10
 
 ### Fixed
