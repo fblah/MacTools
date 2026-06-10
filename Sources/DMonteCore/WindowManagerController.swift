@@ -64,33 +64,11 @@ public final class WindowManagerController: NSObject, ObservableObject {
     /// one would pin a quit app. The pid is re-resolved to a live app at apply time.
     private var popoverTargetPID: pid_t?
 
-    /// Whether a popover session is active (panel ordered in). While true, `targetApplication()`
-    /// uses the snapshot and ignores activation changes — including the spurious one macOS sends
-    /// after a cross-display status-item click.
-    private var popoverSessionActive = false
-
-    /// One observed app activation. Plain values (see `popoverTargetPID` for why not a weak
-    /// `NSRunningApplication`); the name is kept for logging only.
-    private struct RecentActivation {
-        let pid: pid_t
-        let name: String?
-        let at: Date
-    }
-
-    /// Short history of non-suite app activations (most recent last), maintained from
-    /// `NSWorkspace.didActivateApplicationNotification` — the activation-observer pattern
-    /// ClipboardAppDelegate uses for its paste target, extended to a history because resolving
-    /// the popover target needs "the app that was active *before* the status-item click", and
-    /// the click's own spurious activation can land before we run (see `popoverWillShow()`).
-    private var recentActivations: [RecentActivation] = []
-    private static let maxActivationHistory = 8
-
-    /// How close to popover-open an activation must be to count as caused *by* the opening click
-    /// rather than by the user. Measured live (three-display Mac Studio, separate Spaces): the
-    /// spurious re-activation of the popover display's top app landed ~30–70 ms before the
-    /// status-item action on a warm click and ~300 ms after it on a cold one. A genuine user
-    /// switch (click a window, travel to the menu bar, click) takes well over half a second.
-    private static let spuriousActivationWindow: TimeInterval = 0.5
+    /// History of non-suite app activations, so resolving the popover target can find "the app
+    /// that was active *before* the status-item click" — the click's own spurious activation can
+    /// land before we run (see `popoverWillShow()`). The tracker's session freezes the history
+    /// while the popover is open; `targetApplication()` uses the pid snapshot during it.
+    private let activationTracker: ActivationTracker
 
     private static let log = Logger(subsystem: "com.havokentity.mactools.windowmanager", category: "snap")
 
@@ -120,51 +98,23 @@ public final class WindowManagerController: NSObject, ObservableObject {
         shortcuts = store.effectiveShortcuts()
         hasAccessibility = AXIsProcessTrusted()
         secureInputBlocked = SecureInputState.isBlockingHotKeys
+        // Suite apps never qualify as targets: activating our own Toolbox/helpers says nothing
+        // about which window the user wants snapped.
+        activationTracker = ActivationTracker(
+            logger: WindowManagerController.log,
+            excluding: { WindowManagerController.isSuiteApplication($0) }
+        )
         super.init()
-        observeActivations()
     }
 
     // No `deinit` cleanup: under Swift 6 a nonisolated deinit may not touch the @MainActor,
     // non-Sendable `permissionTimer` (same constraint as FocusTimer/KeepAwake). The timer is a
     // repeating poll that captures only `[weak self]`, so it cannot keep the controller alive;
     // it is invalidated deterministically on the main actor once permission is granted, and the
-    // controller is app-lifetime in practice. The same reasoning covers the workspace
-    // activation observer (selector-based, so removal would need main-actor access too).
+    // controller is app-lifetime in practice. The activation tracker's workspace observer is
+    // likewise left in place (see ActivationTracker).
 
-    // MARK: - Activation tracking & popover target session
-
-    /// Remembers the last *meaningfully* activated app so the popover has a trustworthy target.
-    /// Suite apps never qualify: activating our own Toolbox/helpers says nothing about which
-    /// window the user wants snapped. Selector-based (the ClipboardAppDelegate pattern) because
-    /// a block observer cannot move the non-Sendable notification into the main actor under
-    /// Swift 6; workspace notifications are delivered on the main thread.
-    private func observeActivations() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(applicationDidActivate(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
-    }
-
-    @objc private func applicationDidActivate(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              !isSuiteApplication(app) else { return }
-        // While the popover is open, the only activations that can arrive are the late-arriving
-        // spurious shift from the status-item click that opened it (the user cannot click another
-        // window without closing the popover first — the outside-click monitor closes it on
-        // mouse-down, before that click's activation is delivered). Recording those would poison
-        // the history for the next popover session.
-        guard !popoverSessionActive else {
-            Self.log.debug("activation ignored (popover open): \(app.localizedName ?? "?", privacy: .public)")
-            return
-        }
-        Self.log.debug("activation: \(app.localizedName ?? "?", privacy: .public)")
-        recentActivations.append(RecentActivation(pid: app.processIdentifier, name: app.localizedName, at: Date()))
-        if recentActivations.count > Self.maxActivationHistory {
-            recentActivations.removeFirst(recentActivations.count - Self.maxActivationHistory)
-        }
-    }
+    // MARK: - Popover target session
 
     /// Snapshots the snap target for a popover session. MUST be called when the panel *begins*
     /// to show, as part of handling the status-item click.
@@ -180,40 +130,27 @@ public final class WindowManagerController: NSObject, ObservableObject {
     ///   absorbs it;
     /// - warm click (display already active, pointer already on the bar): the spurious
     ///   activation landed ~30–70 ms *before* the action — the frontmost app is already wrong
-    ///   when we run, so `resolvePopoverTarget()` skips history entries younger than
-    ///   `spuriousActivationWindow` and targets the app the user was in before the click.
+    ///   when we run, so `ActivationTracker.resolveTarget()` skips history entries younger than
+    ///   its suspicious-activation window and targets the app the user was in before the click.
     /// The session freezes the resolved target until `popoverDidClose()`; hotkey snaps (no
     /// popover session) keep using the live frontmost app.
     public func popoverWillShow() {
         let candidate = resolvePopoverTarget()
         popoverTargetPID = candidate?.processIdentifier
-        popoverSessionActive = true
+        activationTracker.beginSession()
         popoverTargetName = candidate?.localizedName
         Self.log.info("popover target: \(candidate?.localizedName ?? "none", privacy: .public)")
     }
 
-    /// The app the user was meaningfully working in at popover-open. Most recent activation
-    /// wins, except one young enough to have been caused by the opening click itself, which is
-    /// skipped (and dropped, so a reopened popover resolves consistently) in favor of the app
-    /// activated before it. Falls back to the live frontmost app (never one of ours) when no
-    /// history exists yet, e.g. right after launch.
+    /// The app the user was meaningfully working in at popover-open (the tracker's history
+    /// resolution, including the suspicious-activation skip). Falls back to the live frontmost
+    /// app (never one of ours) when no history exists yet, e.g. right after launch.
     private func resolvePopoverTarget() -> NSRunningApplication? {
-        recentActivations.removeAll { Self.liveApp($0.pid) == nil }
-
-        if let last = recentActivations.last, let lastApp = Self.liveApp(last.pid) {
-            let age = Date().timeIntervalSince(last.at)
-            if age < Self.spuriousActivationWindow,
-               let previousEntry = recentActivations.dropLast().last(where: { $0.pid != last.pid }),
-               let previousApp = Self.liveApp(previousEntry.pid) {
-                Self.log.debug("resolve: skipping suspicious \(last.name ?? "?", privacy: .public) (\(age, format: .fixed(precision: 3))s old) for \(previousEntry.name ?? "?", privacy: .public)")
-                recentActivations.removeLast()
-                return previousApp
-            }
-            Self.log.debug("resolve: history \(last.name ?? "?", privacy: .public) (\(age, format: .fixed(precision: 3))s old)")
-            return lastApp
+        if let target = activationTracker.resolveTarget() {
+            return target
         }
 
-        if let frontmost = NSWorkspace.shared.frontmostApplication, !isSuiteApplication(frontmost) {
+        if let frontmost = NSWorkspace.shared.frontmostApplication, !Self.isSuiteApplication(frontmost) {
             Self.log.debug("resolve: no history, frontmost \(frontmost.localizedName ?? "?", privacy: .public)")
             return frontmost
         }
@@ -221,15 +158,9 @@ public final class WindowManagerController: NSObject, ObservableObject {
         return topmostOtherApplication()
     }
 
-    /// The running, non-terminated app for `pid`, or nil when it is gone.
-    private static func liveApp(_ pid: pid_t) -> NSRunningApplication? {
-        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return nil }
-        return app
-    }
-
     /// Ends the popover session: snaps go back to live frontmost resolution (hotkeys).
     public func popoverDidClose() {
-        popoverSessionActive = false
+        activationTracker.endSession()
         popoverTargetPID = nil
         popoverTargetName = nil
     }
@@ -507,17 +438,17 @@ public final class WindowManagerController: NSObject, ObservableObject {
     /// exactly the "moves the wrong window" bug. In that case we target the topmost ordinary
     /// window owned by any other app instead.
     private func targetApplication() -> NSRunningApplication? {
-        if popoverSessionActive, let pid = popoverTargetPID, let snapshot = Self.liveApp(pid) {
+        if activationTracker.isSessionActive, let pid = popoverTargetPID, let snapshot = ActivationTracker.liveApp(pid) {
             return snapshot // non-suite by construction (popoverWillShow filters)
         }
         guard let frontmost = NSWorkspace.shared.frontmostApplication else { return nil }
-        if !isSuiteApplication(frontmost) { return frontmost }
+        if !Self.isSuiteApplication(frontmost) { return frontmost }
         return topmostOtherApplication()
     }
 
-    private func isSuiteApplication(_ app: NSRunningApplication) -> Bool {
+    private static func isSuiteApplication(_ app: NSRunningApplication) -> Bool {
         if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { return true }
-        return app.bundleIdentifier?.hasPrefix(Self.suiteBundlePrefix) == true
+        return app.bundleIdentifier?.hasPrefix(suiteBundlePrefix) == true
     }
 
     /// Walks the on-screen window list front-to-back and returns the owner of the first
@@ -531,7 +462,7 @@ public final class WindowManagerController: NSObject, ObservableObject {
             guard let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
                   let pid = entry[kCGWindowOwnerPID as String] as? pid_t,
                   let app = NSRunningApplication(processIdentifier: pid),
-                  !isSuiteApplication(app) else { continue }
+                  !Self.isSuiteApplication(app) else { continue }
             return app
         }
         return nil
