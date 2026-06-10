@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Combine
+import os
 
 /// Outcome of applying a window action, so the UI can show a precise message.
 public enum WindowApplyResult: Equatable, Sendable {
@@ -23,15 +24,23 @@ public enum ShortcutAssignment: Equatable, Sendable {
 }
 
 /// Drives the Window Manager: tracks Accessibility permission, registers the global snap
-/// shortcuts, and applies a `WindowAction` to the frontmost app's focused window through the
+/// shortcuts, and applies a `WindowAction` to the target app's focused window through the
 /// Accessibility API. The geometry itself comes from the pure `WindowManagerKit`.
+///
+/// Target selection: hotkey-triggered snaps act on the live frontmost app. Popover-triggered
+/// snaps act on a target snapshotted when the popover began to show — see `popoverWillShow()`
+/// for the cross-display activation shift that makes the live frontmost wrong by tile-click time.
 @MainActor
-public final class WindowManagerController: ObservableObject {
+public final class WindowManagerController: NSObject, ObservableObject {
     /// Whether this process is trusted for Accessibility (required to move other apps' windows).
     @Published public private(set) var hasAccessibility = false
 
     /// The most recent apply outcome, for transient UI feedback.
     @Published public private(set) var lastResult: WindowApplyResult?
+
+    /// Localized name of the app the open popover will snap (the "Will snap: X" affordance), or
+    /// nil when no popover session is active or no target could be resolved.
+    @Published public private(set) var popoverTargetName: String?
 
     /// Effective shortcuts (user overrides over defaults), keyed by action.
     @Published public private(set) var shortcuts: [WindowAction: WindowShortcut] = [:]
@@ -48,6 +57,43 @@ public final class WindowManagerController: ObservableObject {
     private var permissionTimer: Timer?
     private let shortcutStore: WindowShortcutStore
 
+    /// The pid of the app snapshotted at popover-show time; the popover's tiles snap this app,
+    /// never the live frontmost. A pid, not an `NSRunningApplication` reference: the instances
+    /// delivered in notification userInfo are not retained by anyone else, so a weak reference
+    /// dies within a runloop turn (observed live: the history pruned itself empty), and a strong
+    /// one would pin a quit app. The pid is re-resolved to a live app at apply time.
+    private var popoverTargetPID: pid_t?
+
+    /// Whether a popover session is active (panel ordered in). While true, `targetApplication()`
+    /// uses the snapshot and ignores activation changes — including the spurious one macOS sends
+    /// after a cross-display status-item click.
+    private var popoverSessionActive = false
+
+    /// One observed app activation. Plain values (see `popoverTargetPID` for why not a weak
+    /// `NSRunningApplication`); the name is kept for logging only.
+    private struct RecentActivation {
+        let pid: pid_t
+        let name: String?
+        let at: Date
+    }
+
+    /// Short history of non-suite app activations (most recent last), maintained from
+    /// `NSWorkspace.didActivateApplicationNotification` — the activation-observer pattern
+    /// ClipboardAppDelegate uses for its paste target, extended to a history because resolving
+    /// the popover target needs "the app that was active *before* the status-item click", and
+    /// the click's own spurious activation can land before we run (see `popoverWillShow()`).
+    private var recentActivations: [RecentActivation] = []
+    private static let maxActivationHistory = 8
+
+    /// How close to popover-open an activation must be to count as caused *by* the opening click
+    /// rather than by the user. Measured live (three-display Mac Studio, separate Spaces): the
+    /// spurious re-activation of the popover display's top app landed ~30–70 ms before the
+    /// status-item action on a warm click and ~300 ms after it on a cold one. A genuine user
+    /// switch (click a window, travel to the menu bar, click) takes well over half a second.
+    private static let spuriousActivationWindow: TimeInterval = 0.5
+
+    private static let log = Logger(subsystem: "com.havokentity.mactools.windowmanager", category: "snap")
+
     /// Bundle-id prefix shared by the Toolbox and every helper. Snaps never target our own
     /// windows: when the Toolbox is frontmost (e.g. right after launching this helper with
     /// `--open`), the user means the window *underneath*, not the Toolbox.
@@ -56,19 +102,137 @@ public final class WindowManagerController: ObservableObject {
     /// How long an AX call may block before we give up, so one hung app can't beachball us.
     private static let axMessagingTimeoutSeconds: Float = 3.0
 
+    /// Settle time between writing a frame and verifying it, per attempt. Apps that process AX
+    /// geometry asynchronously (Electron) need a beat before the read-back reflects reality;
+    /// the live-diagnosed failure was already visible at +0 ms, so this is generosity, not a fix.
+    private static let frameVerifyDelayMicroseconds: useconds_t = 80_000
+
+    /// Apps flagged with this attribute (VoiceOver and UI-automation clients set it) animate
+    /// AX position changes, and a size set issued mid-animation is acknowledged with `.success`
+    /// and then silently dropped. Diagnosed live against Claude Desktop: pos→size→pos returned
+    /// three successes, the window moved but kept its size — exactly the reported bug. Rectangle
+    /// works around it the same way: clear the flag around the writes, restore it after.
+    private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
+
     public init(defaults: UserDefaults? = nil) {
         let store = WindowShortcutStore(defaults: defaults ?? AppDefaults.shared)
         shortcutStore = store
         shortcuts = store.effectiveShortcuts()
         hasAccessibility = AXIsProcessTrusted()
         secureInputBlocked = SecureInputState.isBlockingHotKeys
+        super.init()
+        observeActivations()
     }
 
     // No `deinit` cleanup: under Swift 6 a nonisolated deinit may not touch the @MainActor,
     // non-Sendable `permissionTimer` (same constraint as FocusTimer/KeepAwake). The timer is a
     // repeating poll that captures only `[weak self]`, so it cannot keep the controller alive;
     // it is invalidated deterministically on the main actor once permission is granted, and the
-    // controller is app-lifetime in practice.
+    // controller is app-lifetime in practice. The same reasoning covers the workspace
+    // activation observer (selector-based, so removal would need main-actor access too).
+
+    // MARK: - Activation tracking & popover target session
+
+    /// Remembers the last *meaningfully* activated app so the popover has a trustworthy target.
+    /// Suite apps never qualify: activating our own Toolbox/helpers says nothing about which
+    /// window the user wants snapped. Selector-based (the ClipboardAppDelegate pattern) because
+    /// a block observer cannot move the non-Sendable notification into the main actor under
+    /// Swift 6; workspace notifications are delivered on the main thread.
+    private func observeActivations() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(applicationDidActivate(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+    }
+
+    @objc private func applicationDidActivate(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              !isSuiteApplication(app) else { return }
+        // While the popover is open, the only activations that can arrive are the late-arriving
+        // spurious shift from the status-item click that opened it (the user cannot click another
+        // window without closing the popover first — the outside-click monitor closes it on
+        // mouse-down, before that click's activation is delivered). Recording those would poison
+        // the history for the next popover session.
+        guard !popoverSessionActive else {
+            Self.log.debug("activation ignored (popover open): \(app.localizedName ?? "?", privacy: .public)")
+            return
+        }
+        Self.log.debug("activation: \(app.localizedName ?? "?", privacy: .public)")
+        recentActivations.append(RecentActivation(pid: app.processIdentifier, name: app.localizedName, at: Date()))
+        if recentActivations.count > Self.maxActivationHistory {
+            recentActivations.removeFirst(recentActivations.count - Self.maxActivationHistory)
+        }
+    }
+
+    /// Snapshots the snap target for a popover session. MUST be called when the panel *begins*
+    /// to show, as part of handling the status-item click.
+    ///
+    /// Why a snapshot, and why a history: with "Displays have separate Spaces" enabled, clicking
+    /// a status item in display X's menu bar makes X the active display, and macOS re-activates
+    /// the topmost app *on X*. By tile-click time the frontmost app is therefore the top app on
+    /// the popover's display, not the app the user was working in — the reported "snapped Unity
+    /// instead of Claude" cross-display bug. Worse, the spurious activation's timing relative to
+    /// this code is not fixed (both orders were observed live on the reporting machine):
+    /// - cold click (menu bar of an inactive display): the status-item action fired first and
+    ///   the spurious activation landed ~300 ms *later* — freezing the session target here
+    ///   absorbs it;
+    /// - warm click (display already active, pointer already on the bar): the spurious
+    ///   activation landed ~30–70 ms *before* the action — the frontmost app is already wrong
+    ///   when we run, so `resolvePopoverTarget()` skips history entries younger than
+    ///   `spuriousActivationWindow` and targets the app the user was in before the click.
+    /// The session freezes the resolved target until `popoverDidClose()`; hotkey snaps (no
+    /// popover session) keep using the live frontmost app.
+    public func popoverWillShow() {
+        let candidate = resolvePopoverTarget()
+        popoverTargetPID = candidate?.processIdentifier
+        popoverSessionActive = true
+        popoverTargetName = candidate?.localizedName
+        Self.log.info("popover target: \(candidate?.localizedName ?? "none", privacy: .public)")
+    }
+
+    /// The app the user was meaningfully working in at popover-open. Most recent activation
+    /// wins, except one young enough to have been caused by the opening click itself, which is
+    /// skipped (and dropped, so a reopened popover resolves consistently) in favor of the app
+    /// activated before it. Falls back to the live frontmost app (never one of ours) when no
+    /// history exists yet, e.g. right after launch.
+    private func resolvePopoverTarget() -> NSRunningApplication? {
+        recentActivations.removeAll { Self.liveApp($0.pid) == nil }
+
+        if let last = recentActivations.last, let lastApp = Self.liveApp(last.pid) {
+            let age = Date().timeIntervalSince(last.at)
+            if age < Self.spuriousActivationWindow,
+               let previousEntry = recentActivations.dropLast().last(where: { $0.pid != last.pid }),
+               let previousApp = Self.liveApp(previousEntry.pid) {
+                Self.log.debug("resolve: skipping suspicious \(last.name ?? "?", privacy: .public) (\(age, format: .fixed(precision: 3))s old) for \(previousEntry.name ?? "?", privacy: .public)")
+                recentActivations.removeLast()
+                return previousApp
+            }
+            Self.log.debug("resolve: history \(last.name ?? "?", privacy: .public) (\(age, format: .fixed(precision: 3))s old)")
+            return lastApp
+        }
+
+        if let frontmost = NSWorkspace.shared.frontmostApplication, !isSuiteApplication(frontmost) {
+            Self.log.debug("resolve: no history, frontmost \(frontmost.localizedName ?? "?", privacy: .public)")
+            return frontmost
+        }
+        Self.log.debug("resolve: no history, topmost-other fallback")
+        return topmostOtherApplication()
+    }
+
+    /// The running, non-terminated app for `pid`, or nil when it is gone.
+    private static func liveApp(_ pid: pid_t) -> NSRunningApplication? {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return nil }
+        return app
+    }
+
+    /// Ends the popover session: snaps go back to live frontmost resolution (hotkeys).
+    public func popoverDidClose() {
+        popoverSessionActive = false
+        popoverTargetPID = nil
+        popoverTargetName = nil
+    }
 
     // MARK: - Permission
 
@@ -216,7 +380,14 @@ public final class WindowManagerController: ObservableObject {
         }
         hasAccessibility = true
 
-        guard let targetApp = targetApplication(), let window = focusedWindow(of: targetApp) else {
+        guard let targetApp = targetApplication() else {
+            return .noFocusedWindow
+        }
+        let appElement = AXUIElementCreateApplication(targetApp.processIdentifier)
+        // Bound how long a hung app may block us; without this a beachballing app freezes the
+        // helper (and the popover) for the system default of several seconds per call.
+        AXUIElementSetMessagingTimeout(appElement, Self.axMessagingTimeoutSeconds)
+        guard let window = focusedWindow(of: appElement) else {
             return .noFocusedWindow
         }
 
@@ -238,34 +409,107 @@ public final class WindowManagerController: ObservableObject {
         let axArea = Self.axRect(fromCocoa: screen.visibleFrame)
         let target = WindowManagerKit.frame(for: action, in: axArea)
 
-        // Apply position → size → position: shrinking/positioning in two passes lets a window move
-        // to a smaller display before its final size is set, which a single pass can clamp.
-        let positionResult = setPosition(target.origin, on: window)
-        let sizeResult = setSize(target.size, on: window)
-        let finalPositionResult = setPosition(target.origin, on: window)
+        return setFrameVerified(target, on: window, appElement: appElement, appName: targetApp.localizedName)
+    }
 
-        // The set calls used to be fire-and-forget, which made every failure on any display look
-        // like "nothing happened" while the UI claimed success. Check all three.
-        let results = [positionResult, sizeResult, finalPositionResult]
-        if results.contains(.apiDisabled) {
-            return .needsPermission
+    /// Writes `target` to the window and verifies it landed, retrying with alternating set
+    /// orderings (`WindowManagerKit.frameSetAttempts`). Writing blind is not enough: the sets can
+    /// all return `.success` while the app drops the size (live-diagnosed against Claude Desktop
+    /// with `AXEnhancedUserInterface` set — the window moved but kept its size). Reads back after
+    /// each attempt and only reports success when the achieved frame matches within
+    /// `WindowManagerKit.frameMatchTolerance`.
+    private func setFrameVerified(_ target: CGRect, on window: AXUIElement, appElement: AXUIElement, appName: String?) -> WindowApplyResult {
+        // Clear AXEnhancedUserInterface for the duration of the writes (restore after): while it
+        // is set, the app animates position changes and silently drops size changes that arrive
+        // mid-animation. With it cleared, the same writes apply exactly, first try.
+        let hadEnhancedUI = isEnhancedUserInterfaceEnabled(appElement)
+        if hadEnhancedUI {
+            setEnhancedUserInterface(false, on: appElement)
         }
-        guard results.allSatisfy({ $0 == .success }) else {
-            return .failed
+        defer {
+            if hadEnhancedUI {
+                setEnhancedUserInterface(true, on: appElement)
+            }
         }
 
-        return .success(appName: targetApp.localizedName)
+        var achieved: CGRect?
+        for order in WindowManagerKit.frameSetAttempts {
+            let results = performFrameSets(target, on: window, order: order)
+            if results.contains(.apiDisabled) {
+                return .needsPermission
+            }
+            // Tiny settle so apps that apply geometry asynchronously finish before the read-back.
+            usleep(Self.frameVerifyDelayMicroseconds)
+            guard let now = frame(of: window) else {
+                return .failed
+            }
+            achieved = now
+            if WindowManagerKit.frameMatches(now, target: target) {
+                return .success(appName: appName)
+            }
+        }
+
+        Self.log.debug("Snap failed verification: target \(target.debugDescription, privacy: .public), achieved \(achieved?.debugDescription ?? "nil", privacy: .public), app \(appName ?? "?", privacy: .public)")
+        return .failed
+    }
+
+    /// One write pass in the given order. Both orders write the redundant first attribute again
+    /// at the end: moving first lets a window cross to a smaller display before its final size is
+    /// set (position-first), and sizing first survives apps that drop a size issued after a move
+    /// (size-first).
+    private func performFrameSets(_ target: CGRect, on window: AXUIElement, order: WindowManagerKit.FrameSetOrder) -> [AXError] {
+        switch order {
+        case .positionFirst:
+            return [
+                setPosition(target.origin, on: window),
+                setSize(target.size, on: window),
+                setPosition(target.origin, on: window)
+            ]
+        case .sizeFirst:
+            return [
+                setSize(target.size, on: window),
+                setPosition(target.origin, on: window),
+                setSize(target.size, on: window)
+            ]
+        }
+    }
+
+    private func isEnhancedUserInterfaceEnabled(_ appElement: AXUIElement) -> Bool {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, Self.enhancedUserInterfaceAttribute as CFString, &ref) == .success else {
+            return false
+        }
+        return (ref as? Bool) == true
+    }
+
+    /// Best-effort: some apps (Chromium) apply the new value while returning a non-success code,
+    /// so the result is deliberately ignored.
+    private func setEnhancedUserInterface(_ enabled: Bool, on appElement: AXUIElement) {
+        AXUIElementSetAttributeValue(
+            appElement,
+            Self.enhancedUserInterfaceAttribute as CFString,
+            enabled ? kCFBooleanTrue : kCFBooleanFalse
+        )
     }
 
     // MARK: - Target selection
 
-    /// The app whose focused window should be snapped. Normally the frontmost app — but never
-    /// one of our own (Toolbox/helpers): right after the Toolbox launches this helper with
-    /// `--open`, the Toolbox itself is frontmost, and snapping *its* window on the primary
-    /// display while the user's window on another display stays put is exactly the
-    /// "moves the wrong window" bug. In that case we target the topmost ordinary window owned
-    /// by any other app instead.
+    /// The app whose focused window should be snapped.
+    ///
+    /// While the popover is open, that is the app snapshotted at popover-show time — the live
+    /// frontmost is untrustworthy then, because opening the popover from another display's menu
+    /// bar makes macOS re-activate whatever is topmost on *that* display (see
+    /// `popoverWillShow()`). Hotkey snaps (no popover session) use the live frontmost app.
+    ///
+    /// Never one of our own apps (Toolbox/helpers) in either path: right after the Toolbox
+    /// launches this helper with `--open`, the Toolbox itself is frontmost, and snapping *its*
+    /// window on the primary display while the user's window on another display stays put is
+    /// exactly the "moves the wrong window" bug. In that case we target the topmost ordinary
+    /// window owned by any other app instead.
     private func targetApplication() -> NSRunningApplication? {
+        if popoverSessionActive, let pid = popoverTargetPID, let snapshot = Self.liveApp(pid) {
+            return snapshot // non-suite by construction (popoverWillShow filters)
+        }
         guard let frontmost = NSWorkspace.shared.frontmostApplication else { return nil }
         if !isSuiteApplication(frontmost) { return frontmost }
         return topmostOtherApplication()
@@ -295,11 +539,7 @@ public final class WindowManagerController: ObservableObject {
 
     // MARK: - Accessibility element access
 
-    private func focusedWindow(of app: NSRunningApplication) -> AXUIElement? {
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        // Bound how long a hung app may block us; without this a beachballing app freezes the
-        // helper (and the popover) for the system default of several seconds per call.
-        AXUIElementSetMessagingTimeout(appElement, Self.axMessagingTimeoutSeconds)
+    private func focusedWindow(of appElement: AXUIElement) -> AXUIElement? {
         var windowRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef)
         guard status == .success, let windowRef,

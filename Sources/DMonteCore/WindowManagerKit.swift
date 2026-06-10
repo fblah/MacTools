@@ -275,6 +275,40 @@ public enum WindowManagerKit {
         }
     }
 
+    // MARK: - Frame verification (pure)
+
+    /// Per-component tolerance, in points, within which an achieved window frame counts as
+    /// matching the requested target. Not zero because some apps legitimately round the request
+    /// (terminals snap their size to character-cell multiples, ~8–20 pt), and calling those
+    /// visually perfect snaps "failed" would be wrong. Real failures are far outside this band:
+    /// the live-diagnosed Electron case kept its old size, hundreds of points off target.
+    public static let frameMatchTolerance: CGFloat = 24
+
+    /// Whether `achieved` is close enough to `target`: every component (origin and size) within
+    /// `tolerance`. Pure, so the verify-and-retry decision is unit-testable.
+    public static func frameMatches(_ achieved: CGRect, target: CGRect, tolerance: CGFloat = frameMatchTolerance) -> Bool {
+        abs(achieved.minX - target.minX) <= tolerance &&
+            abs(achieved.minY - target.minY) <= tolerance &&
+            abs(achieved.width - target.width) <= tolerance &&
+            abs(achieved.height - target.height) <= tolerance
+    }
+
+    /// The order in which one apply attempt writes position and size through AX.
+    public enum FrameSetOrder: Equatable, Sendable {
+        /// position → size → position (the historical order: moving first lets a window cross to
+        /// a smaller display before its final size is set, which a single pass can clamp).
+        case positionFirst
+        /// size → position → size (the alternate: live diagnosis against Claude Desktop showed
+        /// that when `AXEnhancedUserInterface` animates moves, a size set issued *after* a
+        /// position set is acknowledged and then dropped, while size-first applies).
+        case sizeFirst
+    }
+
+    /// The attempt sequence `apply` walks until the achieved frame verifies against the target:
+    /// the initial attempt plus up to two retries, alternating orderings so a window that rejects
+    /// one ordering gets the other before we report failure.
+    public static let frameSetAttempts: [FrameSetOrder] = [.positionFirst, .sizeFirst, .positionFirst]
+
     // MARK: - Screen matching (pure)
 
     /// Converts a Cocoa global rect (origin bottom-left of the primary screen, y up) to AX/Quartz

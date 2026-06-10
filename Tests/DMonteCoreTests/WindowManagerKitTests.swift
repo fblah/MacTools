@@ -119,6 +119,74 @@ final class WindowManagerKitTests: XCTestCase {
         }
     }
 
+    // MARK: - Frame verification (pins the "snap moved but didn't resize" fix)
+
+    func testFrameMatchesExactFrame() {
+        let target = CGRect(x: 3840, y: 30, width: 1280, height: 1410)
+        XCTAssertTrue(WindowManagerKit.frameMatches(target, target: target))
+    }
+
+    func testFrameMatchesRejectsTheLiveDiagnosedKeptSizeCase() {
+        // The real failure measured against Claude Desktop with AXEnhancedUserInterface set:
+        // right-half snap returned three AX successes, but the window only moved (and y was
+        // mangled) while keeping its 900×700 size. Verification must call this a mismatch.
+        let target = CGRect(x: 3840, y: 30, width: 1280, height: 1410)
+        let achieved = CGRect(x: 3840, y: 570, width: 900, height: 700)
+        XCTAssertFalse(WindowManagerKit.frameMatches(achieved, target: target))
+    }
+
+    func testFrameMatchesEachComponentIndependently() {
+        let target = CGRect(x: 100, y: 50, width: 1200, height: 800)
+        let t = WindowManagerKit.frameMatchTolerance
+        // Just inside the tolerance on each component passes…
+        XCTAssertTrue(WindowManagerKit.frameMatches(target.offsetBy(dx: t - 1, dy: 0), target: target))
+        XCTAssertTrue(WindowManagerKit.frameMatches(target.offsetBy(dx: 0, dy: -(t - 1)), target: target))
+        XCTAssertTrue(WindowManagerKit.frameMatches(CGRect(x: 100, y: 50, width: 1200 - (t - 1), height: 800), target: target))
+        XCTAssertTrue(WindowManagerKit.frameMatches(CGRect(x: 100, y: 50, width: 1200, height: 800 + (t - 1)), target: target))
+        // …and just beyond it on any single component fails.
+        XCTAssertFalse(WindowManagerKit.frameMatches(target.offsetBy(dx: t + 1, dy: 0), target: target))
+        XCTAssertFalse(WindowManagerKit.frameMatches(target.offsetBy(dx: 0, dy: t + 1), target: target))
+        XCTAssertFalse(WindowManagerKit.frameMatches(CGRect(x: 100, y: 50, width: 1200 + (t + 1), height: 800), target: target))
+        XCTAssertFalse(WindowManagerKit.frameMatches(CGRect(x: 100, y: 50, width: 1200, height: 800 - (t + 1)), target: target))
+    }
+
+    func testFrameMatchesWorksWithNegativeCoordinates() {
+        // The left BenQ lives at negative AX x on the reporter's arrangement; tolerance math must
+        // not assume positive coordinates.
+        let target = CGRect(x: -1280, y: 30, width: 1280, height: 1410)
+        XCTAssertTrue(WindowManagerKit.frameMatches(CGRect(x: -1282, y: 32, width: 1278, height: 1408), target: target))
+        XCTAssertFalse(WindowManagerKit.frameMatches(CGRect(x: -2560, y: 30, width: 1280, height: 1410), target: target))
+    }
+
+    func testFrameMatchesToleratesTerminalGridRounding() {
+        // Terminals round their size to character-cell multiples (~8–20 pt under the default
+        // font). A snap that lands one cell short is visually correct and must count as success.
+        let target = CGRect(x: 0, y: 30, width: 1280, height: 1410)
+        let rounded = CGRect(x: 0, y: 30, width: 1274, height: 1396)
+        XCTAssertTrue(WindowManagerKit.frameMatches(rounded, target: target))
+    }
+
+    func testFrameMatchesHonorsExplicitTolerance() {
+        let target = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let off = CGRect(x: 3, y: 0, width: 100, height: 100)
+        XCTAssertFalse(WindowManagerKit.frameMatches(off, target: target, tolerance: 2))
+        XCTAssertTrue(WindowManagerKit.frameMatches(off, target: target, tolerance: 3))
+    }
+
+    func testFrameSetAttemptsStartPositionFirstAndAlternate() {
+        // The initial attempt keeps the historical position→size→position order; the retries
+        // must include the size-first alternate (the ordering that survives apps which drop a
+        // size set issued after a move), and the whole plan is initial + up to two retries.
+        XCTAssertEqual(WindowManagerKit.frameSetAttempts.count, 3)
+        XCTAssertEqual(WindowManagerKit.frameSetAttempts.first, .positionFirst)
+        XCTAssertTrue(WindowManagerKit.frameSetAttempts.contains(.sizeFirst))
+        // Consecutive attempts never repeat an ordering — a retry with the identical sequence
+        // would just reproduce the identical failure.
+        for (a, b) in zip(WindowManagerKit.frameSetAttempts, WindowManagerKit.frameSetAttempts.dropFirst()) {
+            XCTAssertNotEqual(a, b)
+        }
+    }
+
     func testAXRectConversionRoundTripsThroughPrimaryHeight() {
         // With a known primary height, Cocoa(bottom-left) → AX(top-left) flips y about the height.
         // We verify the inverse is symmetric: converting twice returns the original rect.
