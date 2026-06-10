@@ -22,11 +22,40 @@ public enum SystemMonitorLoginItem {
         install()
     }
 
+    /// Repairs an installed LaunchAgent whose recorded helper path has gone stale — e.g. the
+    /// "DMonte Toolbox.app" → "DMonte Tool Box.app" rename deleted the bundle path the agent
+    /// pointed at, so launchd failed silently at login and the helper never got a chance to
+    /// rewrite the plist itself. Called from the main Tool Box app at launch with the path the
+    /// helper's own `Bundle.main.executableURL` would report when run from inside the current
+    /// bundle (Contents/Helpers/<App>.app/Contents/MacOS/<exe>).
+    ///
+    /// No-op unless the agent is actually installed (plist on disk — preserving the user's
+    /// enabled/disabled choice) and its recorded path is dead or differs from `expectedPath`.
+    /// Costs at most two small file reads when there is nothing to do.
+    public static func migrateInstalledAgentIfNeeded(toExecutablePath expectedPath: String) {
+        guard FileManager.default.fileExists(atPath: expectedPath),
+              let data = try? Data(contentsOf: launchAgentURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let recordedPath = (plist["ProgramArguments"] as? [String])?.first else {
+            return
+        }
+
+        if recordedPath == expectedPath, FileManager.default.fileExists(atPath: recordedPath) {
+            return
+        }
+
+        install(executablePath: expectedPath)
+    }
+
     private static func install() {
         guard let executablePath = Bundle.main.executableURL?.path else {
             return
         }
 
+        install(executablePath: executablePath)
+    }
+
+    private static func install(executablePath: String) {
         do {
             try FileManager.default.createDirectory(
                 at: launchAgentsDirectory,

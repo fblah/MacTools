@@ -9,7 +9,6 @@ private final class KeyableWindow: NSWindow {
 
 @MainActor
 final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private var statusItem: NSStatusItem?
     private var window: NSWindow?
     private var hasPositionedWindow = false
 
@@ -19,10 +18,8 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configureWindow()
         configureWindowShowNotifications()
 
-        if CommandLine.arguments.contains("--open") || statusItem == nil {
-            DispatchQueue.main.async { [weak self] in
-                self?.showWindow()
-            }
+        DispatchQueue.main.async { [weak self] in
+            self?.showWindow()
         }
     }
 
@@ -32,11 +29,6 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window?.orderOut(nil)
         window?.delegate = nil
         window = nil
-
-        if let statusItem {
-            NSStatusBar.system.removeStatusItem(statusItem)
-            self.statusItem = nil
-        }
     }
 
     private func configureWindow() {
@@ -74,30 +66,6 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.window = window
     }
 
-    private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem = item
-
-        let icon = NSImage(systemSymbolName: "qrcode", accessibilityDescription: "QR") ?? NSImage()
-        StatusBarButtonContent.install(
-            image: icon,
-            in: item,
-            toolTip: "QR",
-            target: self,
-            action: #selector(statusItemClicked)
-        )
-    }
-
-    @objc private func statusItemClicked() {
-        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
-            self?.quitQR()
-        }) {
-            return
-        }
-
-        showWindow(relativeTo: statusItem?.button)
-    }
-
     private func configureWindowShowNotifications() {
         DistributedNotificationCenter.default().addObserver(
             self,
@@ -111,7 +79,7 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showWindow()
     }
 
-    private func showWindow(relativeTo view: NSView? = nil) {
+    private func showWindow() {
         guard let window else {
             return
         }
@@ -123,12 +91,7 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if hasPositionedWindow {
             window.setContentSize(windowSize)
         } else {
-            let frame = if let view {
-                Self.windowFrame(for: windowSize, near: view)
-            } else {
-                Self.centeredWindowFrame(for: windowSize)
-            }
-            window.setFrame(frame, display: true)
+            window.setFrame(Self.centeredWindowFrame(for: windowSize), display: true)
             hasPositionedWindow = true
         }
 
@@ -141,26 +104,7 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if statusItem == nil {
-            NSApp.terminate(nil)
-        }
-    }
-
-    private static func windowFrame(for size: NSSize, near view: NSView) -> NSRect {
-        guard let window = view.window, let screen = window.screen ?? NSScreen.main else {
-            return centeredWindowFrame(for: size)
-        }
-
-        let viewFrameInWindow = view.convert(view.bounds, to: nil)
-        let anchorFrame = window.convertToScreen(viewFrameInWindow)
-        let visibleFrame = screen.visibleFrame
-        let x = min(
-            max(anchorFrame.midX - (size.width / 2), visibleFrame.minX + 8),
-            visibleFrame.maxX - size.width - 8
-        )
-        let y = max(visibleFrame.minY + 8, anchorFrame.minY - size.height - 8)
-
-        return NSRect(x: x, y: y, width: size.width, height: size.height)
+        NSApp.terminate(nil)
     }
 
     private static func centeredWindowFrame(for size: NSSize) -> NSRect {

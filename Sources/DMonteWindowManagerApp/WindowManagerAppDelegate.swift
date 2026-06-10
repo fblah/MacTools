@@ -9,11 +9,12 @@ enum WindowManagerNotifications {
     static let showWindow = Notification.Name("com.havokentity.mactools.windowmanager.showWindow")
 }
 
-/// A panel that can take keyboard focus while floating over other apps. Mirrors the other tools'
-/// floating-panel behaviour and dismissal handling.
+/// A borderless panel returns `canBecomeKey == false` by default, which leaves the SwiftUI
+/// controls unfocusable. Overriding it lets the popover take keyboard focus while
+/// `.nonactivatingPanel` keeps it from stealing activation from the user's current app —
+/// essential here, since the snap tiles resolve their target via the frontmost application.
 private final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
 }
 
 @MainActor
@@ -56,7 +57,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         let size = WindowManagerSizing.preferredSize()
         let panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -133,7 +134,8 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         panel.setContentSize(size)
         panel.setFrame(panelFrame(for: size), display: true)
 
-        NSApp.activate(ignoringOtherApps: true)
+        // No NSApp.activate here: the user's app must stay frontmost so the snap tiles
+        // resolve the correct target window when clicked.
         panel.makeKeyAndOrderFront(nil)
 
         startClickMonitorAfterOpeningClick()

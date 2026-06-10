@@ -1,6 +1,6 @@
 # D'Monte's Tool Box
 
-A native macOS menu bar tool box — 18 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
+A native macOS menu bar tool box — 19 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
 
 Open the tool box from the menu bar, search for what you need, and launch it. Each tool is a self-contained helper with its own polished SwiftUI interface; tools that run continuously (like System Monitor and Clipboard History) add their own menu bar item.
 
@@ -33,6 +33,7 @@ The app updates itself automatically via [Sparkle](https://sparkle-project.org);
 | **Color Picker** | System eyedropper with hex / RGB / HSL and a recent‑colors palette |
 | **Window Manager** | Snap windows to halves, thirds, and corners with global shortcuts (⌃⌥ + arrows) |
 | **Audio Switcher** | One‑click switching of the default input/output device |
+| **Volume Mixer** | Per‑app volume sliders and per‑app output routing via CoreAudio process taps (macOS 14.2+) |
 | **Focus Timer** | Pomodoro timer with a live menu bar countdown |
 | **Calendar** | Menu bar month view with your upcoming events |
 | **Keep Awake** | Prevent sleep, optionally for a set duration |
@@ -46,6 +47,7 @@ A few tools ask macOS for access the first time you use them, and degrade gracef
 - **Window Manager** — Accessibility (to move other apps' windows)
 - **Clipboard History** — Accessibility (to paste into the active app)
 - **Grab Text** / **QR Studio** (screen scan) — Screen Recording
+- **Volume Mixer** — System Audio Recording (`NSAudioCaptureUsageDescription`, to tap each app's audio for per‑app volume and routing)
 - **Calendar** — Calendar access
 
 Clipboard history is stored locally with owner‑only permissions and never records password‑manager or transient copies.

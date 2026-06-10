@@ -120,6 +120,10 @@ final class ClipboardAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerHotKey() {
+        // Release the old key before creating its replacement: GlobalHotKey refuses
+        // duplicate ids, and plain reassignment constructs the new key while the old
+        // one is still registered.
+        hotKey = nil
         hotKey = GlobalHotKey.commandShiftV { [weak self] in
             Task { @MainActor in
                 self?.togglePanel()
