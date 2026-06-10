@@ -14,6 +14,11 @@ on:
         description: "Existing tag to publish"
         required: false
         type: string
+      force_republish:
+        description: "Replace the artifacts of an ALREADY-PUBLISHED release. Dangerous: users on this version are offered the new bytes as a Sparkle update."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -41,19 +46,78 @@ jobs:
       - name: Resolve version
         id: version
         shell: bash
+        # Dispatch inputs are passed through env rather than interpolated with
+        # ${{ }} into the script text — interpolation would let a crafted input
+        # inject shell into this run block.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
         run: |
+          # Same semver shape Scripts/bump_version.sh enforces — keep in sync.
+          semver_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
-            tag="${{ inputs.tag_name }}"
+            version="$INPUT_VERSION"
+            tag="$INPUT_TAG_NAME"
             if [[ -z "$tag" ]]; then
               tag="v$version"
+            fi
+            # The tag must be exactly "v<version>": the zip is named after
+            # $version and the appcast download URL is built from $tag, so a
+            # mismatch would attach this version's artifacts to a release for a
+            # different version.
+            if [[ "$tag" != "v$version" ]]; then
+              echo "::error::tag_name '$tag' does not match version '$version' (expected 'v$version')."
+              exit 1
             fi
           else
             tag="${GITHUB_REF_NAME}"
             version="${tag#v}"
           fi
+
+          if [[ ! "$version" =~ $semver_re ]]; then
+            echo "::error::Version '$version' is not semantic (expected e.g. 0.2.0 or 1.0.0-beta.1)."
+            exit 1
+          fi
+
+          # Record whether the tag already exists on the remote. For tag pushes
+          # the tag is the triggering ref, so it trivially exists; for dispatch
+          # runs this decides both the checkout below and whether the release
+          # step pins a fresh tag to the built commit.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if ! remote_tag="$(git ls-remote --tags origin "refs/tags/$tag")"; then
+              echo "::error::Could not query origin for tag '$tag'."
+              exit 1
+            fi
+            if [[ -n "$remote_tag" ]]; then
+              tag_exists="true"
+            else
+              tag_exists="false"
+            fi
+          else
+            tag_exists="true"
+          fi
+
+          # A dispatch run checks out the dispatched branch, NOT the tag. When
+          # the tag already exists we must build ITS source — otherwise
+          # artifacts built from (say) current main get attached to the tag and
+          # silently rewrite history for a released version. Fail rather than
+          # build the wrong code.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "$tag_exists" == "true" ]]; then
+            if ! git fetch --depth=1 origin "refs/tags/$tag:refs/tags/$tag"; then
+              echo "::error::Tag '$tag' exists on the remote but could not be fetched."
+              exit 1
+            fi
+            if ! git checkout --force "refs/tags/$tag"; then
+              echo "::error::Could not check out tag '$tag'."
+              exit 1
+            fi
+            echo "Building from tag $tag ($(git rev-parse HEAD)) instead of the dispatched ref."
+          fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$tag_exists" >> "$GITHUB_OUTPUT"
           echo "$version" > VERSION
 
       - name: Import Developer ID signing certificate
@@ -128,14 +192,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG_NAME: ${{ steps.version.outputs.tag }}
+          TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
+          # Only a workflow_dispatch can set this (empty on tag pushes), so a
+          # re-pushed tag can never silently replace a published release.
+          FORCE_REPUBLISH: ${{ inputs.force_republish }}
         shell: bash
         run: |
           # A version containing a hyphen (e.g. 0.6.2-rc1) is a prerelease. GitHub's
           # /releases/latest excludes prereleases, so the Sparkle "latest" appcast feed
           # never serves an RC to real users — making release-candidate testing safe.
           prerelease_flag=""
+          prerelease_value="false"
           if [[ "$VERSION" == *-* ]]; then
             prerelease_flag="--prerelease"
+            prerelease_value="true"
           fi
           title="D'Monte's Tool Box $VERSION"
           notes_file="dist/release-notes.md"
@@ -143,22 +213,66 @@ jobs:
             printf "D'Monte's Tool Box %s release.\n" "$VERSION" > "$notes_file"
           fi
 
+          zip_name="DMonte-Tool-Box-$VERSION.zip"
+
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            # Published releases are immutable. The existing zip is already
+            # EdDSA-signed and served to Sparkle clients, and sparkle:version is
+            # the run number (which increments per run) — so replacing the asset
+            # would push different bytes to users already on this version as a
+            # fake "update", with no trace of the old binary. Replacing it must
+            # therefore be an explicit, loud act.
+            if [[ "$FORCE_REPUBLISH" != "true" ]]; then
+              echo "::error::A release for $TAG_NAME is already published; its artifacts are immutable." \
+                   "To deliberately republish, run the workflow manually (workflow_dispatch) with" \
+                   "version=$VERSION, tag_name=$TAG_NAME and force_republish=true."
+              exit 1
+            fi
+
+            echo "::warning::FORCE REPUBLISH: replacing already-published artifacts of $TAG_NAME (version $VERSION) in run $GITHUB_RUN_ID, triggered by $GITHUB_ACTOR."
+            echo "::warning::Users already on $VERSION will be offered the replacement bytes as a Sparkle update."
+
+            # Preserve the previous binary under a superseded name so it stays
+            # auditable — the republish destroys it at the canonical URL. Best
+            # effort: a failure here (e.g. the asset is missing) must not brick
+            # a deliberate republish.
+            superseded_name="DMonte-Tool-Box-$VERSION-superseded-run$GITHUB_RUN_ID.zip"
+            preserve_dir="$RUNNER_TEMP/superseded-assets"
+            mkdir -p "$preserve_dir"
+            if gh release download "$TAG_NAME" --pattern "$zip_name" --dir "$preserve_dir" \
+              && mv "$preserve_dir/$zip_name" "$preserve_dir/$superseded_name" \
+              && gh release upload "$TAG_NAME" "$preserve_dir/$superseded_name" --clobber; then
+              echo "::warning::Previous artifact preserved as release asset $superseded_name."
+            else
+              echo "::warning::Could not preserve the previous $zip_name (asset may be missing); continuing with the republish."
+            fi
+
+            # --prerelease must be set explicitly both ways on edit: the bare
+            # flag can only ever SET it, so a stable republish of a former RC
+            # tag would otherwise stay stuck as a prerelease forever.
             gh release edit "$TAG_NAME" \
               --title "$title" \
               --notes-file "$notes_file" \
-              $prerelease_flag
+              --prerelease="$prerelease_value"
             gh release delete-asset "$TAG_NAME" "DMonte-Toolbox-$VERSION.zip" -y 2>/dev/null || true
-            gh release delete-asset "$TAG_NAME" "DMonte-Tool-Box-$VERSION.zip" -y 2>/dev/null || true
+            gh release delete-asset "$TAG_NAME" "$zip_name" -y 2>/dev/null || true
             gh release delete-asset "$TAG_NAME" "appcast.xml" -y 2>/dev/null || true
             gh release upload "$TAG_NAME" \
-              "dist/DMonte-Tool-Box-$VERSION.zip" \
+              "dist/$zip_name" \
               "dist/appcast.xml"
           else
+            # When the tag does not exist yet (fresh release via dispatch), pin
+            # it to the commit we actually built — otherwise gh would create the
+            # tag at whatever the default branch points to at publish time.
+            target_args=()
+            if [[ "$TAG_EXISTS" != "true" ]]; then
+              target_args=(--target "$GITHUB_SHA")
+            fi
             gh release create "$TAG_NAME" \
-              "dist/DMonte-Tool-Box-$VERSION.zip" \
+              "dist/$zip_name" \
               "dist/appcast.xml" \
               --title "$title" \
               --notes-file "$notes_file" \
+              "${target_args[@]}" \
               $prerelease_flag
           fi
