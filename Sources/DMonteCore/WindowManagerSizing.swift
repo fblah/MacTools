@@ -2,8 +2,11 @@ import AppKit
 
 public enum WindowManagerSizing {
     public static func preferredSize() -> NSSize {
+        // 380×560: wide enough for the shortcut rows ("In use by macOS…" notices) and tall
+        // enough that the collapsible Keyboard Shortcuts section is reachable without feeling
+        // cramped; the content scrolls, so smaller screens still work via the scale clamp.
         let scale = currentScale
-        return NSSize(width: (360 * scale).rounded(), height: (520 * scale).rounded())
+        return NSSize(width: (380 * scale).rounded(), height: (560 * scale).rounded())
     }
 
     static var currentScale: CGFloat {

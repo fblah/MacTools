@@ -1,11 +1,88 @@
 import AppKit
 import SwiftUI
 
+/// Captures the next keyDown while the user records a custom shortcut. A local NSEvent monitor
+/// sees the panel's key events (the popover panel can become key); Esc cancels; the event is
+/// swallowed so the recorded keystroke doesn't also type into the UI.
+@MainActor
+final class ShortcutRecorder: ObservableObject {
+    /// The action currently being recorded, or nil when idle.
+    @Published private(set) var recordingAction: WindowAction?
+
+    private var monitor: Any?
+    private var resignObserver: NSObjectProtocol?
+
+    /// Starts recording for `action`. `onCapture` receives the captured shortcut, or nil when
+    /// the user cancels with Esc. Recording also auto-cancels when the popover panel resigns
+    /// key (it is ordered out without tearing down the SwiftUI hierarchy, so `onDisappear`
+    /// alone can't be relied on to clean the monitor up).
+    func begin(for action: WindowAction, onCapture: @escaping (WindowShortcut?) -> Void) {
+        cancel()
+        recordingAction = action
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.cancel()
+            }
+        }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self else { return event }
+            let escapeKeyCode: UInt16 = 53
+            if event.keyCode == escapeKeyCode, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+                self.end()
+                onCapture(nil)
+            } else {
+                let shortcut = WindowShortcut(
+                    keyCode: UInt32(event.keyCode),
+                    modifiers: Self.carbonModifiers(from: event.modifierFlags)
+                )
+                self.end()
+                onCapture(shortcut)
+            }
+            return nil // swallow the keystroke
+        }
+    }
+
+    /// Stops recording without capturing.
+    func cancel() {
+        end()
+    }
+
+    private func end() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
+        recordingAction = nil
+    }
+
+    /// AppKit modifier flags → Carbon modifier mask (the format `RegisterEventHotKey` wants).
+    static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
+        var mask: UInt32 = 0
+        let device = flags.intersection(.deviceIndependentFlagsMask)
+        if device.contains(.command) { mask |= HotKeyModifier.command }
+        if device.contains(.shift) { mask |= HotKeyModifier.shift }
+        if device.contains(.option) { mask |= HotKeyModifier.option }
+        if device.contains(.control) { mask |= HotKeyModifier.control }
+        return mask
+    }
+}
+
 /// The Window Manager popover: a grid of snap tiles that resize the frontmost app's focused
-/// window, an Accessibility-permission banner when the grant is missing, and the default
-/// keyboard-shortcut hints.
+/// window, an Accessibility-permission banner when the grant is missing, and a collapsible
+/// keyboard-shortcuts section where every action's shortcut can be remapped.
 public struct WindowManagerPopoverView: View {
     @ObservedObject var controller: WindowManagerController
+    @StateObject private var recorder = ShortcutRecorder()
+    @State private var shortcutsExpanded = false
+    @State private var shortcutNotice: String?
     var onQuit: () -> Void
 
     private let scale = WindowManagerSizing.currentScale
@@ -36,7 +113,8 @@ public struct WindowManagerPopoverView: View {
                     section("Corners", corners, columns: 4)
                     section("Thirds", thirds, columns: 5)
                     section("Size", sizing, columns: 3)
-                    shortcutHint
+                    resultFeedback
+                    shortcutSection
                 }
                 .padding(.horizontal, s(16))
                 .padding(.vertical, s(12))
@@ -45,6 +123,7 @@ public struct WindowManagerPopoverView: View {
         .frame(width: WindowManagerSizing.preferredSize().width, height: WindowManagerSizing.preferredSize().height)
         .frostedPanel(cornerRadius: 18)
         .onAppear { controller.refreshPermission() }
+        .onDisappear { recorder.cancel() }
     }
 
     private var header: some View {
@@ -126,30 +205,170 @@ public struct WindowManagerPopoverView: View {
         .buttonStyle(.plain)
         .disabled(!controller.hasAccessibility)
         .opacity(controller.hasAccessibility ? 1 : 0.5)
-        .help(shortcutLabel(for: action).map { "\(action.title)  \($0)" } ?? action.title)
+        .help(controller.shortcut(for: action).map { "\(action.title)  \($0.displayString)" } ?? action.title)
     }
 
-    private var shortcutHint: some View {
-        VStack(alignment: .leading, spacing: s(3)) {
-            Text("Shortcuts use ⌃⌥ + arrows · ⌃⌥↩ maximize · ⌃⌥C center")
+    /// Transient feedback for the last apply, including *which* app's window was snapped —
+    /// when the wrong window moves, naming the target is what makes the problem visible.
+    @ViewBuilder
+    private var resultFeedback: some View {
+        switch controller.lastResult {
+        case .success(let appName):
+            Text("Snapped \(appName ?? "the focused window")")
                 .font(.system(size: s(9.5)))
                 .foregroundStyle(.secondary)
-            if case .noFocusedWindow = controller.lastResult {
-                Text("No focused window to arrange.")
-                    .font(.system(size: s(9.5)))
+        case .noFocusedWindow:
+            Text("No focused window to arrange.")
+                .font(.system(size: s(9.5)))
+                .foregroundStyle(.orange)
+        case .failed:
+            Text("The focused window couldn't be moved — its app may not allow it.")
+                .font(.system(size: s(9.5)))
+                .foregroundStyle(.orange)
+        case .needsPermission, nil:
+            EmptyView()
+        }
+    }
+
+    // MARK: - Shortcuts
+
+    private var shortcutSection: some View {
+        VStack(alignment: .leading, spacing: s(6)) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    shortcutsExpanded.toggle()
+                }
+                if !shortcutsExpanded {
+                    recorder.cancel()
+                    shortcutNotice = nil
+                }
+            } label: {
+                HStack(spacing: s(5)) {
+                    Image(systemName: shortcutsExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: s(9), weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Text("Keyboard Shortcuts")
+                        .font(.system(size: s(11), weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if !shortcutsExpanded {
+                        Text(collapsedShortcutSummary)
+                            .font(.system(size: s(9)))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if shortcutsExpanded {
+                if controller.secureInputBlocked {
+                    secureInputNotice
+                }
+                if let shortcutNotice {
+                    Text(shortcutNotice)
+                        .font(.system(size: s(9.5)))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(spacing: s(3)) {
+                    ForEach(WindowAction.allCases) { action in
+                        shortcutRow(action)
+                    }
+                }
+
+                HStack {
+                    Text("Click a shortcut, then press the new keys. Esc cancels.")
+                        .font(.system(size: s(9)))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Reset to Defaults") {
+                        recorder.cancel()
+                        shortcutNotice = nil
+                        controller.resetShortcutsToDefaults()
+                    }
+                    .font(.system(size: s(10), weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+                .padding(.top, s(2))
+            }
+        }
+    }
+
+    private var collapsedShortcutSummary: String {
+        if controller.secureInputBlocked { return "blocked by macOS Secure Input" }
+        if !controller.registrationFailures.isEmpty { return "\(controller.registrationFailures.count) need attention" }
+        return "⌃⌥ + arrows · customizable"
+    }
+
+    private var secureInputNotice: some View {
+        Text("macOS Secure Input is blocking all global shortcuts right now (a password field, the lock screen, or a stuck loginwindow). They resume automatically when it ends; if it persists, lock and unlock the screen or restart.")
+            .font(.system(size: s(9.5)))
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(s(8))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: s(6)).fill(Color.orange.opacity(0.12)))
+    }
+
+    private func shortcutRow(_ action: WindowAction) -> some View {
+        let isRecording = recorder.recordingAction == action
+        let failed = controller.registrationFailures[action] != nil
+
+        return VStack(alignment: .leading, spacing: s(1)) {
+            HStack(spacing: s(8)) {
+                Text(action.title)
+                    .font(.system(size: s(10.5)))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    beginRecording(action)
+                } label: {
+                    Text(isRecording ? "Press keys…" : (controller.shortcut(for: action)?.displayString ?? "Set"))
+                        .font(.system(size: s(10.5), weight: .medium, design: isRecording ? .default : .rounded))
+                        .foregroundStyle(isRecording ? Color.accentColor : (failed ? .orange : .primary.opacity(0.8)))
+                        .padding(.horizontal, s(8))
+                        .padding(.vertical, s(2.5))
+                        .background(
+                            RoundedRectangle(cornerRadius: s(5), style: .continuous)
+                                .fill(isRecording ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.07))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: s(5), style: .continuous)
+                                .strokeBorder(isRecording ? Color.accentColor.opacity(0.6) : .clear, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Click to record a new shortcut for \(action.title)")
+            }
+            if failed && !isRecording {
+                Text("In use by macOS or another app — click to change.")
+                    .font(.system(size: s(8.5)))
                     .foregroundStyle(.orange)
             }
         }
-        .padding(.top, s(2))
     }
 
-    /// A human-readable shortcut label for tiles that have a default shortcut.
-    private func shortcutLabel(for action: WindowAction) -> String? {
-        guard let shortcut = action.defaultShortcut else { return nil }
-        let arrows: [UInt32: String] = [
-            HotKeyCode.left: "←", HotKeyCode.right: "→", HotKeyCode.up: "↑", HotKeyCode.down: "↓",
-            HotKeyCode.returnKey: "↩", HotKeyCode.c: "C"
-        ]
-        return "⌃⌥" + (arrows[shortcut.keyCode] ?? "?")
+    private func beginRecording(_ action: WindowAction) {
+        shortcutNotice = nil
+        if recorder.recordingAction == action {
+            recorder.cancel()
+            return
+        }
+        recorder.begin(for: action) { shortcut in
+            guard let shortcut else { return } // Esc — cancelled
+            switch controller.assignShortcut(shortcut, to: action) {
+            case .assigned:
+                shortcutNotice = nil
+            case .conflict(let holder):
+                shortcutNotice = "\(shortcut.displayString) is already used by \(holder.title). Pick a different combination."
+            case .needsModifiers:
+                shortcutNotice = "Add at least one of ⌘ ⌃ ⌥ (function keys may stand alone)."
+            }
+        }
     }
 }

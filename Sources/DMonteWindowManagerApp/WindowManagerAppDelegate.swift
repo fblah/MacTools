@@ -28,11 +28,12 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
 
-        // Register snap shortcuts up front if we already have Accessibility; otherwise the
-        // controller registers them automatically the moment the grant is detected.
-        if controller.hasAccessibility {
-            controller.registerHotKeys()
-        }
+        // Reconcile hotkey registration with the current Accessibility grant. This registers up
+        // front when permission already exists; otherwise the controller registers automatically
+        // the moment the grant is detected (permission polling or popover open), re-attempts
+        // failed registrations on every popover open, and releases the keys if the grant is
+        // revoked. Shortcut remaps re-register live via the controller.
+        controller.refreshPermission()
 
         configurePanel()
         configureStatusItem()
