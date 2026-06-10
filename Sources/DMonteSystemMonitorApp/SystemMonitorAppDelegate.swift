@@ -8,10 +8,9 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = SystemMonitor()
     private var statusItem: NSStatusItem?
     private var statusView: SystemMonitorStatusView?
-    private var panel: NSPanel?
+    private var panelHost: HelperPanelHost?
     private var snapshotSink: AnyCancellable?
     private var defaultsSink: AnyCancellable?
-    private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
@@ -31,12 +30,8 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
 
-        if let eventMonitor {
-            NSEvent.removeMonitor(eventMonitor)
-            self.eventMonitor = nil
-        }
-
-        panel?.orderOut(nil)
+        panelHost?.removeOutsideClickMonitor()
+        panelHost?.dismissForTermination()
 
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
@@ -46,39 +41,31 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurePopover() {
-        let panelSize = SystemMonitorPanelSizing.preferredSize()
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: panelSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
+        // The popover panel never takes key focus (read-only metrics), sits at pop-up-menu
+        // level and is revealed with orderFrontRegardless without stealing activation.
+        let host = HelperPanelHost(
+            configuration: HelperPanelHost.Configuration(
+                styleMask: [.borderless, .nonactivatingPanel],
+                level: .popUpMenu,
+                canBecomeKey: false,
+                canBecomeMain: false,
+                sizing: .preferredPinned({ SystemMonitorPanelSizing.preferredSize() }),
+                activation: .orderFrontRegardless
+            ),
+            content: .viewController({ [monitor, weak self] in
+                NSHostingController(
+                    rootView: SystemMonitorPopoverView(
+                        monitor: monitor,
+                        onQuit: {
+                            self?.quitSystemMonitor()
+                        }
+                    )
+                )
+            }),
+            anchorView: { [weak self] in self?.statusView }
         )
-        panel.backgroundColor = .clear
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isReleasedWhenClosed = false
-        let hostingController = NSHostingController(
-            rootView: SystemMonitorPopoverView(
-                monitor: monitor,
-                onQuit: { [weak self] in
-                    self?.quitSystemMonitor()
-                }
-            )
-        )
-        hostingController.view.frame = NSRect(origin: .zero, size: panelSize)
-        hostingController.view.wantsLayer = true
-        hostingController.view.layer?.cornerRadius = 18
-        hostingController.view.layer?.cornerCurve = .continuous
-        hostingController.view.layer?.masksToBounds = true
-        panel.contentViewController = hostingController
-        panel.contentMinSize = panelSize
-        panel.contentMaxSize = panelSize
-        panel.setContentSize(panelSize)
-        panel.hasShadow = true
-        panel.hidesOnDeactivate = false
-        panel.isFloatingPanel = true
-        panel.isOpaque = false
-        panel.level = .popUpMenu
-        self.panel = panel
+        panelHost = host
+        host.configure()
     }
 
     private func configureStatusItem() {
@@ -162,7 +149,7 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func closePopoverForEnvironmentChange(_ notification: Notification) {
-        closePopover()
+        panelHost?.close()
     }
 
     private func updateStatusTitle(_ snapshot: MetricSnapshot) {
@@ -170,102 +157,34 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func togglePopover() {
-        if let panel, panel.isVisible {
-            guard Self.panelIsOnVisibleScreen(panel) else {
-                closePopover()
+        guard let panelHost else {
+            return
+        }
+
+        if panelHost.isPanelVisible {
+            // A display-layout change can strand the visible panel off screen; re-show it
+            // near the status item instead of merely hiding it.
+            guard panelHost.isPanelOnVisibleScreen() else {
+                panelHost.close()
                 showPopover()
                 return
             }
 
-            closePopover()
+            panelHost.close()
         } else {
             showPopover()
         }
     }
 
     private func showPopover() {
-        guard let statusView, let panel else {
+        guard statusView != nil else {
             return
         }
 
-        let panelSize = SystemMonitorPanelSizing.preferredSize()
-        panel.contentMinSize = panelSize
-        panel.contentMaxSize = panelSize
-        panel.setContentSize(panelSize)
-        panel.setFrame(Self.panelFrame(for: panelSize, anchoredTo: statusView), display: true)
-        panel.orderFrontRegardless()
-        NSApp.activate(ignoringOtherApps: false)
-        startOutsideClickMonitorAfterOpeningClick()
-    }
-
-    private func closePopover() {
-        panel?.orderOut(nil)
-        stopOutsideClickMonitorIfIdle()
-    }
-
-    private func startOutsideClickMonitor() {
-        guard panel?.isVisible == true else {
-            return
-        }
-
-        if eventMonitor != nil {
-            return
-        }
-
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.closePopover()
-        }
-    }
-
-    private func startOutsideClickMonitorAfterOpeningClick() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            self?.startOutsideClickMonitor()
-        }
-    }
-
-    private func stopOutsideClickMonitorIfIdle() {
-        guard panel?.isVisible != true, let eventMonitor else {
-            return
-        }
-
-        NSEvent.removeMonitor(eventMonitor)
-        self.eventMonitor = nil
-    }
-
-    private static func panelIsOnVisibleScreen(_ panel: NSPanel) -> Bool {
-        NSScreen.screens.contains { screen in
-            screen.visibleFrame.intersects(panel.frame)
-        }
+        panelHost?.show()
     }
 
     private func quitSystemMonitor() {
         NSApp.terminate(nil)
-    }
-
-    private static func panelFrame(for size: NSSize, anchoredTo view: NSView) -> NSRect {
-        guard let window = view.window, let screen = window.screen ?? NSScreen.main else {
-            return centeredPanelFrame(for: size)
-        }
-
-        let viewFrameInWindow = view.convert(view.bounds, to: nil)
-        let anchorFrame = window.convertToScreen(viewFrameInWindow)
-        let visibleFrame = screen.visibleFrame
-        let x = min(
-            max(anchorFrame.midX - (size.width / 2), visibleFrame.minX + 8),
-            visibleFrame.maxX - size.width - 8
-        )
-        let y = max(visibleFrame.minY + 8, anchorFrame.minY - size.height - 8)
-
-        return NSRect(x: x, y: y, width: size.width, height: size.height)
-    }
-
-    private static func centeredPanelFrame(for size: NSSize) -> NSRect {
-        let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return NSRect(
-            x: visibleFrame.midX - (size.width / 2),
-            y: visibleFrame.midY - (size.height / 2),
-            width: size.width,
-            height: size.height
-        )
     }
 }

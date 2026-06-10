@@ -2,23 +2,37 @@ import AppKit
 import SwiftUI
 import DMonteCore
 
-/// A borderless panel that can still become key so the SwiftUI popover can take
-/// keyboard focus while floating over other apps. (Each helper target defines its
-/// own private copy; there is no shared symbol.)
-private final class KeyablePanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 @MainActor
 final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var panel: KeyablePanel?
-    private var outsideClickMonitor: Any?
-    private var showWindowObserver: NSObjectProtocol?
+    private var panelHost: HelperPanelHost?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDefaults.registerDefaults()
+
+        let host = HelperPanelHost(
+            configuration: HelperPanelHost.Configuration(
+                styleMask: [.borderless, .nonactivatingPanel],
+                isFloatingPanel: nil,
+                hidesOnDeactivate: nil,
+                isReleasedWhenClosed: nil,
+                creation: .onFirstShow,
+                sizing: .fixedAtCreation(
+                    NSSize(width: AudioSwitcherSizing.panelWidth, height: AudioSwitcherSizing.panelHeight)
+                ),
+                activation: .orderFrontThenActivate,
+                clickMonitorInstall: .immediate,
+                positioning: .anchoredOriginRawBounds(gap: 8)
+            ),
+            content: .view({ [weak self] in
+                let content = AudioSwitcherPopoverView(onQuit: {
+                    self?.quit()
+                })
+                return NSHostingView(rootView: content)
+            }),
+            anchorView: { [weak self] in self?.statusItem?.button }
+        )
+        panelHost = host
 
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -34,15 +48,7 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
         }
         self.statusItem = statusItem
 
-        showWindowObserver = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.havokentity.mactools.audioswitcher.showWindow"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.showPopover()
-            }
-        }
+        host.observeShowNotification(named: Notification.Name("com.havokentity.mactools.audioswitcher.showWindow"))
     }
 
     @objc private func togglePopover() {
@@ -52,86 +58,7 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if let panel, panel.isVisible {
-            closePopover()
-        } else {
-            showPopover()
-        }
-    }
-
-    private func showPopover() {
-        let panelToShow: KeyablePanel
-        if let existing = panel {
-            panelToShow = existing
-        } else {
-            let newPanel = makePanel()
-            panel = newPanel
-            panelToShow = newPanel
-        }
-
-        positionPanel(panelToShow)
-        panelToShow.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-
-        addOutsideClickMonitor()
-    }
-
-    private func closePopover() {
-        if let monitor = outsideClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            outsideClickMonitor = nil
-        }
-        panel?.orderOut(nil)
-    }
-
-    private func makePanel() -> KeyablePanel {
-        let content = AudioSwitcherPopoverView(onQuit: { [weak self] in
-            self?.quit()
-        })
-        let hosting = NSHostingView(rootView: content)
-        // Round + clip the hosting layer so the panel's shadow follows the rounded
-        // .frostedPanel edge instead of casting a square halo (matches the other tools).
-        hosting.wantsLayer = true
-        hosting.layer?.cornerRadius = 18
-        hosting.layer?.cornerCurve = .continuous
-        hosting.layer?.masksToBounds = true
-        let panel = KeyablePanel(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: AudioSwitcherSizing.panelWidth,
-                height: AudioSwitcherSizing.panelHeight
-            ),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.contentView = hosting
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        return panel
-    }
-
-    private func positionPanel(_ panel: KeyablePanel) {
-        guard let button = statusItem?.button, let screen = button.window?.screen else { return }
-        let buttonFrame = button.window?.convertToScreen(button.bounds) ?? .zero
-        var x = buttonFrame.midX - AudioSwitcherSizing.panelWidth / 2
-        var y = buttonFrame.minY - 8 - AudioSwitcherSizing.panelHeight
-        let visible = screen.visibleFrame
-        x = max(visible.minX + 8, min(x, visible.maxX - AudioSwitcherSizing.panelWidth - 8))
-        if y < visible.minY + 8 { y = visible.minY + 8 }
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    @objc private func addOutsideClickMonitor() {
-        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.closePopover()
-            }
-        }
+        panelHost?.toggle()
     }
 
     private func quit() {
@@ -140,14 +67,8 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func cleanup() {
-        if let monitor = outsideClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            outsideClickMonitor = nil
-        }
-        if let observer = showWindowObserver {
-            DistributedNotificationCenter.default().removeObserver(observer)
-            showWindowObserver = nil
-        }
+        panelHost?.removeOutsideClickMonitor()
+        panelHost?.stopObservingShowNotifications()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
