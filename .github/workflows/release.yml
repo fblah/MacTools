@@ -28,20 +28,29 @@ jobs:
     name: Build and publish release
     runs-on: macos-latest
 
-    # Promote secrets to job-level env so step-level `if:` can test them — the
-    # `secrets` context is NOT available in a step `if:`, but `env` is.
-    env:
-      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
-      NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
-      NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-      NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
-      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-
     steps:
+      # The `secrets` context is NOT available in a step `if:`, so this step
+      # converts "is the secret configured?" into plain step outputs the later
+      # `if:` conditions can test. The secrets are env-scoped to THIS step
+      # only — promoting them to job-level env would put them in the process
+      # environment of EVERY step, including the third-party checkout action
+      # and `swift build` (which executes repo-controlled Package.swift
+      # manifest code). Each secret's value is instead passed only to the
+      # step(s) that actually consume it.
+      - name: Detect configured secrets
+        id: secrets
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          {
+            echo "has_cert=$([[ -n "$MACOS_CERT_P12" ]] && echo true || echo false)"
+            echo "has_notary=$([[ -n "$NOTARY_KEY_P8" ]] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Resolve version
         id: version
@@ -123,26 +132,52 @@ jobs:
       - name: Import Developer ID signing certificate
         # Only runs when the signing secrets are configured; otherwise the build
         # falls back to an ad-hoc signature (not notarizable, fine for testing).
-        if: ${{ env.MACOS_CERT_P12 != '' }}
+        # The cert and its password are env-scoped HERE only — no other step
+        # (and no child process of the build) ever sees them.
+        if: ${{ steps.secrets.outputs.has_cert == 'true' }}
         env:
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         shell: bash
         run: |
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          # Random keychain password — NOT ${{ github.run_id }}, which is public
+          # in the run URL. Handed to the build step via a 0600 file in
+          # RUNNER_TEMP rather than a step output or env: GitHub masks secrets
+          # in logs but NOT values derived at runtime, so this must never be
+          # echoed or written to $GITHUB_OUTPUT.
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          (umask 077; printf '%s' "$KEYCHAIN_PASSWORD" > "$RUNNER_TEMP/keychain_password")
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           # No auto-lock, so the keychain stays usable for the later build step.
           security set-keychain-settings "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          # -A grants all apps access to the key (plus -T for codesign explicitly).
+          # -T grants ONLY codesign access to the key (no -A, which would let
+          # every process on the runner use the signing key).
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
-            -P "$MACOS_CERT_PASSWORD" -A -T /usr/bin/codesign
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          # Pre-authorize Apple-signed tools (codesign among them) to use the
+          # imported key without a UI prompt — with -A gone, this partition list
+          # is what keeps signing non-interactive.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           # Make our keychain the DEFAULT and put it first on the search list.
           # codesign resolves an identity-by-name against the default keychain, so
           # this is what actually lets the build step find the identity.
           security default-keychain -s "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          # Keep the existing user keychains on the search list, read line-by-line
+          # into an array — keychain paths can contain spaces, so an unquoted
+          # $(...) expansion would word-split them.
+          existing_keychains=()
+          while IFS= read -r line; do
+            line="${line//\"/}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            if [[ -n "$line" && "$line" != "$KEYCHAIN" ]]; then
+              existing_keychains+=("$line")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN" "${existing_keychains[@]}"
           rm -f "$RUNNER_TEMP/cert.p12"
           # Fail loudly here (not 60s deep in the build) if the uploaded cert is not a
           # "Developer ID Application" cert — that's the only kind notarization accepts
@@ -155,33 +190,59 @@ jobs:
           fi
 
       - name: Write notary API key
-        if: ${{ env.NOTARY_KEY_P8 != '' }}
+        if: ${{ steps.secrets.outputs.has_notary == 'true' }}
+        # The raw .p8 is env-scoped here only; the build step gets just the
+        # PATH to the decoded file.
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
         shell: bash
         run: |
-          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary_key.p8"
+          (umask 077; echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary_key.p8")
 
       - name: Build release artifacts
         shell: bash
-        # SPARKLE_PRIVATE_KEY, CODESIGN_IDENTITY, NOTARY_KEY_ID and NOTARY_KEY_ISSUER
-        # are inherited from the job-level env above. Only step-specific values are
-        # declared here. NOTARY_KEY_PATH points at the .p8 the previous step wrote
-        # (empty when the key secret is unset → notarize_app.sh no-ops).
+        # This step gets only the secrets its scripts actually read:
+        #   CODESIGN_IDENTITY   — package_app.sh picks the signing identity;
+        #                         notarize_app.sh uses it to hard-fail when a
+        #                         real identity has no notary credentials.
+        #   SPARKLE_PRIVATE_KEY — make_release_artifacts.sh EdDSA-signs the zip.
+        #   NOTARY_KEY_ID/_ISSUER — notarize_app.sh API-key auth.
+        # The .p12 cert + password live only in the import step's keychain, and
+        # the raw .p8 only in the write step — `swift build` (repo-controlled
+        # Package.swift code) never sees them. NOTARY_KEY_PATH points at the
+        # .p8 the previous step wrote (empty when the key secret is unset →
+        # notarize_app.sh no-ops).
         env:
           VERSION_OVERRIDE: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
           TAG_NAME: ${{ steps.version.outputs.tag }}
           GITHUB_TOKEN: ${{ github.token }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-          NOTARY_KEY_PATH: ${{ env.NOTARY_KEY_P8 != '' && format('{0}/notary_key.p8', runner.temp) || '' }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
+          NOTARY_KEY_PATH: ${{ steps.secrets.outputs.has_notary == 'true' && format('{0}/notary_key.p8', runner.temp) || '' }}
         run: |
           # Re-unlock the signing keychain in THIS shell — keychain unlock state does
           # not carry across steps, so codesign would otherwise fail with
           # "no identity found" even though the cert is imported.
           if [[ -n "$CODESIGN_IDENTITY" ]]; then
             KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            # Random password the import step generated (file handoff — see there).
+            KEYCHAIN_PASSWORD="$(cat "$RUNNER_TEMP/keychain_password")"
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
             security default-keychain -s "$KEYCHAIN"
-            security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+            # Same space-safe search-list rebuild as the import step.
+            existing_keychains=()
+            while IFS= read -r line; do
+              line="${line//\"/}"
+              line="${line#"${line%%[![:space:]]*}"}"
+              line="${line%"${line##*[![:space:]]}"}"
+              if [[ -n "$line" && "$line" != "$KEYCHAIN" ]]; then
+                existing_keychains+=("$line")
+              fi
+            done < <(security list-keychains -d user)
+            security list-keychains -d user -s "$KEYCHAIN" "${existing_keychains[@]}"
             # Sanity-check the identity is resolvable before the long build.
             security find-identity -v -p codesigning
           fi
@@ -276,3 +337,24 @@ jobs:
               "${target_args[@]}" \
               $prerelease_flag
           fi
+
+      - name: Clean up signing material
+        # Runs on success, failure and cancellation alike, and tolerates the
+        # no-secrets path where none of these files were ever created.
+        if: always()
+        shell: bash
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          if [[ -f "$KEYCHAIN" ]]; then
+            # delete-keychain removes the file AND drops it from the search
+            # list, which restores the pre-import list (the import step
+            # preserved every existing entry).
+            security delete-keychain "$KEYCHAIN" || true
+            # The import step pointed the default keychain at the signing
+            # keychain; point it back at the runner's login keychain.
+            LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+            if [[ -f "$LOGIN_KEYCHAIN" ]]; then
+              security default-keychain -s "$LOGIN_KEYCHAIN" || true
+            fi
+          fi
+          rm -f "$RUNNER_TEMP/keychain_password" "$RUNNER_TEMP/notary_key.p8"
