@@ -337,6 +337,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
 
         NSApp.terminate(nil)
 
+        // Watchdog so a stalled or cancelled termination can't leave a "quit" app
+        // running — but never while Sparkle has an update session in flight:
+        // terminate(nil) is exactly how an install-on-quit update hands off to the
+        // installer, and a hard exit here would abort the queued install mid-handoff.
+        guard !updaterController.updater.sessionInProgress else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             exit(EXIT_SUCCESS)
         }
