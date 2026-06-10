@@ -4,6 +4,43 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.7] — 2026-06-10
+
+### Fixed
+- Window Manager: each snap shortcut (⌃⌥ arrows/↩/C) now performs its own
+  action; previously every shortcut triggered the same one.
+- Window Manager: opening the popover no longer steals focus from the active
+  app, so the snap tiles act on the window you were actually using.
+- Automatic update checks now start when the Tool Box launches; previously
+  updates were only found via a manual check.
+- Volume Mixer: attenuating an app on the default output no longer rebuilds
+  the audio tap every two seconds, removing the periodic audio blips.
+- Volume Mixer: volume and pin settings now persist for apps without a bundle
+  identifier (command-line players and similar).
+- Volume Mixer: unmuting an app restores its previous level instead of jumping
+  to 100%, and the per-app play/stop buttons now stick instead of being
+  overridden by the automatic processing a couple of seconds later.
+- Volume Mixer: apps paused while attenuated resume at the set volume instead
+  of playing at full volume until processing re-engages.
+- Clipboard and System Monitor login items broken by the app's rename to
+  "DMonte Tool Box" are repaired automatically when the Tool Box launches.
+- Disk Usage Analyzer no longer freezes the interface for several seconds when
+  a large scan finishes; the tree index is built in the background.
+- Clean Drive's cleaning bar drains over the selected items instead of
+  plunging when only part of the junk was selected.
+- Control-clicking any tray icon now opens the right-click menu.
+
+### Changed
+- README now documents all 19 tools, including the Volume Mixer.
+
+### Security
+- Release pipeline hardening: published releases can no longer be silently
+  replaced (republishing requires an explicit manual override and preserves
+  the prior artifact), releases are always built from the source of their
+  tag, the bundled yt-dlp is pinned to a checksum-verified version (failing
+  closed), and a signed build that cannot be notarized now fails the release
+  instead of publishing a Gatekeeper-blocked app.
+
 ## [0.8.6] — 2026-06-10
 
 ### Added
