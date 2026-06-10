@@ -19,6 +19,9 @@ set -euo pipefail
 #
 # If none are set, this prints how to configure them and exits 0 WITHOUT failing,
 # so `make_release_artifacts.sh` can run unnotarized for local/ad-hoc builds.
+# EXCEPTION: in CI with a real Developer ID identity (CODESIGN_IDENTITY set),
+# missing notary credentials are a hard error — publishing a Developer-ID-signed
+# but un-notarized app would get Gatekeeper-blocked on every downloader's Mac.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/dist/DMonte Tool Box.app"
@@ -37,6 +40,22 @@ elif [[ -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_KEY_ISSUER:-}" && -n "${NOTARY_K
 elif [[ -n "${NOTARY_APPLE_ID:-}" && -n "${NOTARY_TEAM_ID:-}" && -n "${NOTARY_PASSWORD:-}" ]]; then
   NOTARY_ARGS=(--apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD")
 else
+  # In CI with a real Developer ID in play, skipping silently would publish a
+  # signed-but-unnotarized app that Gatekeeper blocks for everyone — fail loudly
+  # and name exactly which of the API-key vars is missing (names only, no values).
+  if [[ ( -n "${GITHUB_ACTIONS:-}" || -n "${CI:-}" ) && -n "${CODESIGN_IDENTITY:-}" ]]; then
+    MISSING=()
+    [[ -z "${NOTARY_KEY_ID:-}" ]] && MISSING+=(NOTARY_KEY_ID)
+    [[ -z "${NOTARY_KEY_ISSUER:-}" ]] && MISSING+=(NOTARY_KEY_ISSUER)
+    [[ -z "${NOTARY_KEY_PATH:-}" ]] && MISSING+=("NOTARY_KEY_PATH (set from the NOTARY_KEY_P8 secret)")
+    echo "::error::Notary credentials incomplete in CI — missing: ${MISSING[*]}." \
+         "CODESIGN_IDENTITY is set, so this build is signed with a real Developer ID;" \
+         "a Developer-ID-signed but un-notarized app must NOT be published — Gatekeeper" \
+         "would block it on every downloader's machine. Fix the notary secrets" \
+         "(or unset the signing secrets for an ad-hoc test build) and re-run." >&2
+    exit 1
+  fi
+
   cat >&2 <<'MSG'
 Skipping notarization: no credentials in the environment.
 
@@ -49,12 +68,35 @@ MSG
 fi
 
 # notarytool ingests a zip/dmg/pkg, not a bare .app — zip it for submission.
-SUBMIT_ZIP="$(mktemp -d)/DMonteToolBox-notarize.zip"
+# The trap cleans the temp dir on every exit path, success and failure alike.
+SUBMIT_TMP="$(mktemp -d)"
+SUBMIT_ZIP="$SUBMIT_TMP/DMonteToolBox-notarize.zip"
+trap 'rm -rf "$SUBMIT_TMP"' EXIT
 echo "Zipping app for notarization…"
 ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$SUBMIT_ZIP"
 
+# Submit and check the RESULT, not just the exit code — `notarytool submit --wait`
+# has historically exited 0 even when the submission status is "Invalid", which
+# otherwise only surfaces later as a cryptic stapler failure with the actual
+# rejection reasons never fetched.
 echo "Submitting to Apple notary service (this can take a few minutes)…"
-xcrun notarytool submit "$SUBMIT_ZIP" "${NOTARY_ARGS[@]}" --wait
+SUBMIT_EXIT=0
+SUBMIT_JSON="$(xcrun notarytool submit "$SUBMIT_ZIP" "${NOTARY_ARGS[@]}" --wait --output-format json)" || SUBMIT_EXIT=$?
+printf '%s\n' "$SUBMIT_JSON"
+
+# python3 is already a dependency of make_release_artifacts.sh, so no new tools.
+SUBMISSION_ID="$(printf '%s' "$SUBMIT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' 2>/dev/null || true)"
+SUBMIT_STATUS="$(printf '%s' "$SUBMIT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' 2>/dev/null || true)"
+
+if [[ "$SUBMIT_EXIT" -ne 0 || "$SUBMIT_STATUS" != "Accepted" ]]; then
+  echo "error: notarization was not accepted (exit code $SUBMIT_EXIT, status: ${SUBMIT_STATUS:-unknown})." >&2
+  if [[ -n "$SUBMISSION_ID" ]]; then
+    # Pull Apple's rejection log so the reasons land in the build output.
+    echo "Fetching notary log for submission $SUBMISSION_ID…" >&2
+    xcrun notarytool log "$SUBMISSION_ID" "${NOTARY_ARGS[@]}" >&2 || true
+  fi
+  exit 1
+fi
 
 # Staple the ticket onto the .app so it validates offline / after the zip is gone.
 echo "Stapling notarization ticket…"
@@ -65,5 +107,4 @@ xcrun stapler validate "$APP_DIR"
 echo "Gatekeeper assessment:"
 spctl --assess --type execute --verbose=2 "$APP_DIR"
 
-rm -f "$SUBMIT_ZIP"
 echo "Notarized and stapled: $APP_DIR"
