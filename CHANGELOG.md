@@ -4,6 +4,12 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.5] — 2026-06-10
+
+### Fixed
+- Sparkle update details now mark embedded release notes as Markdown so headings
+  and lists render as rich text instead of showing raw Markdown syntax.
+
 ## [0.8.4] — 2026-06-10
 
 ### Changed
@@ -169,6 +175,7 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
+[0.8.5]: https://github.com/havokentity/MacTools/releases/tag/v0.8.5
 [0.8.4]: https://github.com/havokentity/MacTools/releases/tag/v0.8.4
 [0.8.3]: https://github.com/havokentity/MacTools/releases/tag/v0.8.3
 [0.8.2]: https://github.com/havokentity/MacTools/releases/tag/v0.8.2
