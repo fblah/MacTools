@@ -75,8 +75,9 @@ final class ShortcutRecorder: ObservableObject {
     }
 }
 
-/// The Window Manager popover: a grid of snap tiles that resize the frontmost app's focused
-/// window, an Accessibility-permission banner when the grant is missing, and a collapsible
+/// The Window Manager popover: a grid of snap tiles that resize the target app's focused window
+/// (the app snapshotted when the popover opened — shown as "Will snap: X"), an
+/// Accessibility-permission banner when the grant is missing, and a collapsible
 /// keyboard-shortcuts section where every action's shortcut can be remapped.
 public struct WindowManagerPopoverView: View {
     @ObservedObject var controller: WindowManagerController
@@ -109,6 +110,7 @@ public struct WindowManagerPopoverView: View {
                     if !controller.hasAccessibility {
                         permissionBanner
                     }
+                    targetAffordance
                     section("Halves", halves, columns: 4)
                     section("Corners", corners, columns: 4)
                     section("Thirds", thirds, columns: 5)
@@ -165,6 +167,23 @@ public struct WindowManagerPopoverView: View {
         .padding(s(10))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: s(8)).fill(Color.orange.opacity(0.12)))
+    }
+
+    /// Names the window the tiles will act on (the target snapshotted at popover-open). Makes
+    /// the cross-display wrong-target failure mode visible *before* anything moves, not only
+    /// after via "Snapped X".
+    @ViewBuilder
+    private var targetAffordance: some View {
+        if controller.hasAccessibility, let target = controller.popoverTargetName {
+            HStack(spacing: s(5)) {
+                Image(systemName: "scope")
+                    .font(.system(size: s(9), weight: .semibold))
+                Text("Will snap: \(target)")
+                    .font(.system(size: s(10), weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.secondary)
+        }
     }
 
     private func section(_ title: String, _ actions: [WindowAction], columns: Int) -> some View {

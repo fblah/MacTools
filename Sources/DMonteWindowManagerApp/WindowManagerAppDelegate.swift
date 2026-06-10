@@ -42,8 +42,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DistributedNotificationCenter.default().removeObserver(self)
-        removeClickMonitor()
-        panel?.orderOut(nil)
+        closePanel()
         panel = nil
 
         if let statusItem {
@@ -128,6 +127,13 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     private func showPanel() {
         guard let panel else { return }
 
+        // Resolve and freeze the snap target FIRST. With separate Spaces, the status-item click
+        // that opened us re-activates the topmost app on the popover's display (sometimes before
+        // this code runs, sometimes a few hundred ms after — both observed live); waiting until
+        // a tile is clicked would resolve that app instead — the cross-display wrong-target bug.
+        // The controller resolves from its activation history, not the live frontmost.
+        controller.popoverWillShow()
+
         // The grant may have changed since launch; refresh so the banner/tiles reflect reality.
         controller.refreshPermission()
 
@@ -135,8 +141,8 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         panel.setContentSize(size)
         panel.setFrame(panelFrame(for: size), display: true)
 
-        // No NSApp.activate here: the user's app must stay frontmost so the snap tiles
-        // resolve the correct target window when clicked.
+        // No NSApp.activate here: the panel must not steal activation from the user's app
+        // (.nonactivatingPanel), and the target snapshot above must stay the last meaningful one.
         panel.makeKeyAndOrderFront(nil)
 
         startClickMonitorAfterOpeningClick()
@@ -145,6 +151,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
     private func closePanel() {
         panel?.orderOut(nil)
         removeClickMonitor()
+        controller.popoverDidClose()
     }
 
     private func panelFrame(for size: NSSize) -> NSRect {
