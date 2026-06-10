@@ -42,7 +42,10 @@ public struct ToolPopoverView: View {
             if isShowingSettings {
                 PreferencesOverlay(cornerRadius: 18) {
                     SettingsView(
-                        onCheckForUpdates: onCheckForUpdates,
+                        onCheckForUpdates: {
+                            isShowingSettings = false
+                            onCheckForUpdates()
+                        },
                         onQuit: onQuit,
                         onClose: { isShowingSettings = false }
                     )

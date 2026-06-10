@@ -92,6 +92,7 @@ public enum StatusBarButtonContent {
     @MainActor
     public static func popUpQuitMenuIfNeeded(
         for item: NSStatusItem?,
+        additionalItems: [(title: String, action: () -> Void)] = [],
         quitTitle: String = "Quit",
         action: @escaping () -> Void
     ) -> Bool {
@@ -103,6 +104,17 @@ public enum StatusBarButtonContent {
         }
 
         let menu = NSMenu()
+        for additionalItem in additionalItems {
+            let handler = MenuAction(action: additionalItem.action)
+            let menuItem = NSMenuItem(title: additionalItem.title, action: #selector(MenuAction.performAction), keyEquivalent: "")
+            menuItem.target = handler
+            menuItem.representedObject = handler
+            menu.addItem(menuItem)
+        }
+        if !additionalItems.isEmpty {
+            menu.addItem(.separator())
+        }
+
         let handler = MenuAction(action: action)
         let quitItem = NSMenuItem(title: quitTitle, action: #selector(MenuAction.performAction), keyEquivalent: "")
         quitItem.target = handler

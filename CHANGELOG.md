@@ -4,6 +4,22 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.6] — 2026-06-10
+
+### Added
+- The Tool Box tray icon's right-click menu now includes a Check for Updates
+  action.
+
+### Fixed
+- Checking for updates from Tool Box settings now closes the settings panel
+  before Sparkle shows its update dialog, so reopening the Tool Box returns to
+  the dashboard.
+- Disk Usage Analyzer keeps scans running in the background when switching
+  drives; scans pause only when the pause button is clicked.
+- Disk Usage Analyzer scan progress no longer reports percentages above 100%
+  when scanned bytes exceed the volume estimate; folder traversal progress is
+  folded into the displayed percentage instead.
+
 ## [0.8.5] — 2026-06-10
 
 ### Fixed

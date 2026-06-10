@@ -1350,12 +1350,11 @@ public struct DiskAnalyzerWindowView: View {
 
     private func select(volume: DiskVolume) {
         // Switching volumes must NOT cancel an in-flight scan — let it survive so
-        // its result lands in the cache. We do pause it though: only the visible
-        // drive scans actively, so a background scan stops burning CPU/IO until
-        // the user comes back to it.
+        // its result lands in the cache. Scan pause state is controlled only by
+        // the pause button, so background scans keep running unless the user
+        // explicitly pauses them.
         hoveredNode = nil
         selectedVolume = volume
-        focusScans(on: volume.id)
 
         if let cached = treeCaches[volume.id] {
             pathStack = [cached.root]
@@ -1396,8 +1395,7 @@ public struct DiskAnalyzerWindowView: View {
 
         let gate = ScanPauseGate()
         scanGates[volumeId] = gate
-        // A brand-new scan is the active one; make sure other drives are paused.
-        focusScans(on: volumeId)
+        pausedVolumeIds.remove(volumeId)
 
         scanTasks[volumeId] = Task(priority: .userInitiated) {
             let node = await DiskScanner.scan(volume: volume, tracker: tracker, gate: gate)
@@ -1458,19 +1456,6 @@ public struct DiskAnalyzerWindowView: View {
                 treemapLayoutCaches[volumeId] = cache
                 treemapLayoutTasks.removeValue(forKey: volumeId)
             }
-        }
-    }
-
-    /// Only the visible drive scans actively: pause every other in-flight scan
-    /// and resume the one the user is now looking at.
-    private func focusScans(on volumeId: String) {
-        for (id, gate) in scanGates where id != volumeId {
-            gate.pause()
-            pausedVolumeIds.insert(id)
-        }
-        if let gate = scanGates[volumeId] {
-            gate.resume()
-            pausedVolumeIds.remove(volumeId)
         }
     }
 
@@ -1851,7 +1836,8 @@ private struct ScanProgressPanel: View {
             let estimatedRatio = Double(progress.bytesScanned) / Double(target)
             let exceededEstimate = estimatedRatio >= 1
             let folderFraction = directoryFraction(progress)
-            let barFraction = scanBarFraction(byteRatio: estimatedRatio, folderFraction: folderFraction)
+            let scanFraction = scanProgressFraction(byteRatio: estimatedRatio, folderFraction: folderFraction)
+            let barFraction = scanBarFraction(scanFraction: scanFraction, exceededEstimate: exceededEstimate, folderFraction: folderFraction)
 
             VStack(alignment: .leading, spacing: layout.summarySpacing) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -1869,7 +1855,7 @@ private struct ScanProgressPanel: View {
                     Spacer()
 
                     if let volume {
-                        Text(estimateLabel(ratio: estimatedRatio, volume: volume))
+                        Text(estimateLabel(scanFraction: scanFraction, exceededEstimate: exceededEstimate, volume: volume))
                             .font(.system(size: layout.summarySubFontSize, weight: .semibold, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
@@ -1939,18 +1925,28 @@ private struct ScanProgressPanel: View {
         return min(1, max(0, Double(progress.directoriesScanned) / Double(discovered)))
     }
 
-    private func scanBarFraction(byteRatio: Double, folderFraction: Double) -> Double {
+    private func scanProgressFraction(byteRatio: Double, folderFraction: Double) -> Double {
+        let boundedByteFraction = min(1, max(0, byteRatio))
+        let boundedFolderFraction = min(1, max(0, folderFraction))
+
         if byteRatio >= 1 {
-            return min(0.995, 0.96 + (0.035 * folderFraction))
+            return min(0.995, 0.96 + (0.035 * boundedFolderFraction))
         }
-        let byteFraction = min(1, max(0.02, byteRatio))
-        return min(0.985, byteFraction * (0.96 + (0.025 * folderFraction)))
+
+        return min(0.985, boundedByteFraction * (0.96 + (0.025 * boundedFolderFraction)))
     }
 
-    private func estimateLabel(ratio: Double, volume: DiskVolume) -> String {
-        let percent = max(0, Int((ratio * 100).rounded()))
-        if ratio >= 1 {
-            return "\(percent)% of estimate"
+    private func scanBarFraction(scanFraction: Double, exceededEstimate: Bool, folderFraction: Double) -> Double {
+        if exceededEstimate {
+            return min(0.995, 0.96 + (0.035 * folderFraction))
+        }
+        return min(0.985, max(0.02, scanFraction))
+    }
+
+    private func estimateLabel(scanFraction: Double, exceededEstimate: Bool, volume: DiskVolume) -> String {
+        let percent = min(99, max(0, Int((scanFraction * 100).rounded(.down))))
+        if exceededEstimate {
+            return "\(percent)% scanned"
         }
         return "\(percent)% of \(volume.usedBytes.diskBytesString) est."
     }

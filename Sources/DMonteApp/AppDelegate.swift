@@ -92,9 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUSta
     }
 
     @objc private func toolboxStatusItemClicked() {
-        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: toolboxStatusItem, action: { [weak self] in
-            self?.quit()
-        }) {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(
+            for: toolboxStatusItem,
+            additionalItems: [
+                (title: "Check for Updates", action: { [weak self] in
+                    self?.checkForUpdates()
+                })
+            ],
+            action: { [weak self] in
+                self?.quit()
+            }
+        ) {
             return
         }
 
