@@ -5,6 +5,7 @@ public final class SystemMonitorStatusView: NSControl {
     public static let statusWidth: CGFloat = 165
     public static let statusWidthWithoutIcon: CGFloat = statusWidth - iconWidth
     private static let highlightRightInset: CGFloat = 0
+    private static let contrastGreen = NSColor(srgbRed: 0.00, green: 0.58, blue: 0.24, alpha: 1)
 
     public var onClick: (() -> Void)?
     public var showsIcon = true {
@@ -130,7 +131,7 @@ public final class SystemMonitorStatusView: NSControl {
 
         iconView.image = NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "System Monitor")
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .bold)
-        iconView.contentTintColor = .labelColor
+        iconView.contentTintColor = Self.contrastGreen
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         let networkStack = NSStackView(views: [downLabel, upLabel])

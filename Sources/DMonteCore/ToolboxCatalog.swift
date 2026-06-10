@@ -42,9 +42,10 @@ public struct ToolboxTool: Identifiable, Sendable {
 
 public enum ToolboxCatalog {
     private static let prefix = "com.havokentity.mactools."
+    private static let contrastGreen = Color(red: 0.00, green: 0.55, blue: 0.22)
 
     public static let all: [ToolboxTool] = [
-        ToolboxTool(id: "systemMonitor", title: "System Monitor", iconName: "waveform.path.ecg.rectangle", tint: .green, bundleID: prefix + "systemmonitor", appName: "DMonte System Monitor.app", executableName: "DMonteSystemMonitor", arguments: []),
+        ToolboxTool(id: "systemMonitor", title: "System Monitor", iconName: "waveform.path.ecg.rectangle", tint: contrastGreen, bundleID: prefix + "systemmonitor", appName: "DMonte System Monitor.app", executableName: "DMonteSystemMonitor", arguments: []),
         ToolboxTool(id: "downloadVideo", title: "Download Video", iconName: "play.rectangle.fill", tint: .purple, bundleID: prefix + "videodownloader", appName: "DMonte Video Downloader.app", executableName: "DMonteVideoDownloader", arguments: ["--open"]),
         ToolboxTool(id: "uninstaller", title: "Uninstall Apps", iconName: "trash", tint: .red, bundleID: prefix + "uninstaller", appName: "DMonte Uninstaller.app", executableName: "DMonteUninstaller", arguments: ["--open"]),
         ToolboxTool(id: "cleanDrive", title: "Clean Drive", iconName: "paintbrush.pointed", tint: .yellow, bundleID: prefix + "cleandrive", appName: "DMonte Clean Drive.app", executableName: "DMonteCleanDrive", arguments: ["--open"]),
@@ -60,7 +61,7 @@ public enum ToolboxCatalog {
         ToolboxTool(id: "volumeMixer", title: "Volume Mixer", iconName: "slider.horizontal.3", tint: .cyan, bundleID: prefix + "volumemixer", appName: "DMonte Volume Mixer.app", executableName: "DMonteVolumeMixer", arguments: ["--open"]),
         ToolboxTool(id: "calendar", title: "Calendar", iconName: "calendar", tint: .red, bundleID: prefix + "calendar", appName: "DMonte Calendar.app", executableName: "DMonteCalendar", arguments: ["--open"]),
         ToolboxTool(id: "colorPicker", title: "Color Picker", iconName: "eyedropper.halffull", tint: .mint, bundleID: prefix + "colorpicker", appName: "DMonte Color Picker.app", executableName: "DMonteColorPicker", arguments: ["--open"]),
-        ToolboxTool(id: "grabText", title: "Grab Text", iconName: "text.viewfinder", tint: .green, bundleID: prefix + "grabtext", appName: "DMonte Grab Text.app", executableName: "DMonteGrabText", arguments: ["--open"]),
+        ToolboxTool(id: "grabText", title: "Grab Text", iconName: "text.viewfinder", tint: contrastGreen, bundleID: prefix + "grabtext", appName: "DMonte Grab Text.app", executableName: "DMonteGrabText", arguments: ["--open"]),
         ToolboxTool(id: "focusTimer", title: "Focus Timer", iconName: "timer", tint: .red, bundleID: prefix + "focustimer", appName: "DMonte Focus Timer.app", executableName: "DMonteFocusTimer", arguments: ["--open"]),
         ToolboxTool(id: "windowManager", title: "Window Manager", iconName: "macwindow.on.rectangle", tint: .blue, bundleID: prefix + "windowmanager", appName: "DMonte Window Manager.app", executableName: "DMonteWindowManager", arguments: ["--open"])
     ]

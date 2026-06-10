@@ -274,13 +274,23 @@ private struct ToolboxIcon: View {
                 VStack(spacing: 8) {
                     ZStack {
                         Circle()
-                            .fill(tool.tint.opacity(0.13))
+                            .fill(iconFill)
+                            .overlay {
+                                Circle()
+                                    .fill(.black.opacity(0.035))
+                            }
+                            .overlay {
+                                Circle()
+                                    .strokeBorder(iconBorder, lineWidth: 1.15)
+                            }
+                            .shadow(color: iconShadow, radius: 5, y: 2)
                             .frame(width: 54, height: 54)
 
                         Image(systemName: tool.iconName)
-                            .symbolRenderingMode(.hierarchical)
-                            .font(.system(size: 25, weight: .semibold))
-                            .foregroundStyle(tool.tint)
+                            .symbolRenderingMode(.monochrome)
+                            .font(.system(size: 25, weight: .bold))
+                            .foregroundStyle(iconForeground)
+                            .shadow(color: .white.opacity(0.24), radius: 0, y: 1)
                     }
 
                     Text(tool.title)
@@ -313,6 +323,35 @@ private struct ToolboxIcon: View {
         .frame(width: 82, height: 92, alignment: .top)
         .onHover { hovering in
             isHovering = hovering
+        }
+    }
+
+    private var iconFill: Color {
+        tool.tint.opacity(isHovering ? 0.34 : 0.28)
+    }
+
+    private var iconBorder: Color {
+        tool.tint.opacity(isHovering ? 0.72 : 0.58)
+    }
+
+    private var iconShadow: Color {
+        iconForeground.opacity(isHovering ? 0.22 : 0.14)
+    }
+
+    private var iconForeground: Color {
+        switch tool.id {
+        case "cleanDrive":
+            Color(red: 0.58, green: 0.39, blue: 0.00)
+        case "devTools", "volumeMixer":
+            Color(red: 0.00, green: 0.42, blue: 0.54)
+        case "duplicateFinder", "colorPicker":
+            Color(red: 0.00, green: 0.46, blue: 0.33)
+        case "imageConverter":
+            Color(red: 0.00, green: 0.42, blue: 0.45)
+        case "systemMonitor", "grabText":
+            Color(red: 0.00, green: 0.38, blue: 0.16)
+        default:
+            tool.tint
         }
     }
 }

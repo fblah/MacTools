@@ -14,7 +14,7 @@ private final class KeyableToolboxPanel: NSPanel {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency SPUStandardUserDriverDelegate {
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
@@ -194,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverD
         }
 
         let size = Self.preferredPopoverSize()
+        panel.level = .popUpMenu
         panel.setContentSize(size)
         panel.setFrame(Self.panelFrame(for: size, anchoredTo: view), display: true)
         panel.makeKeyAndOrderFront(nil)
@@ -208,20 +209,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverD
     private func checkForUpdates() {
         prepareForSparkleModal()
 
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.updaterController.checkForUpdates(nil)
         }
     }
 
-    nonisolated func standardUserDriverWillShowModalAlert() {
-        Task { @MainActor [weak self] in
-            self?.prepareForSparkleModal()
-        }
+    func standardUserDriverWillShowModalAlert() {
+        prepareForSparkleModal()
+    }
+
+    func standardUserDriverDidShowModalAlert() {
+        bringSparkleModalToFront()
     }
 
     private func prepareForSparkleModal() {
         closeToolboxPopover()
+        toolboxPanel?.level = .normal
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func bringSparkleModalToFront() {
+        prepareForSparkleModal()
+
+        for window in NSApp.windows where window !== toolboxPanel && window.isVisible {
+            window.level = .modalPanel
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
 

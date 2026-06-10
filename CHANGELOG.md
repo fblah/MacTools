@@ -4,6 +4,17 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.3] — 2026-06-10
+
+### Changed
+- System Monitor and Grab Text use a higher-contrast green treatment in the
+  Tool Box grid.
+- System Monitor's menu bar ECG glyph now uses the same stronger green.
+
+### Fixed
+- Sparkle update-check dialogs are forced in front of the Tool Box panel so the
+  "you're up to date" window remains clickable.
+
 ## [0.8.2] — 2026-06-10
 
 ### Added
@@ -152,6 +163,7 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
+[0.8.3]: https://github.com/havokentity/MacTools/releases/tag/v0.8.3
 [0.8.2]: https://github.com/havokentity/MacTools/releases/tag/v0.8.2
 [0.8.1]: https://github.com/havokentity/MacTools/releases/tag/v0.8.1
 [0.8.0]: https://github.com/havokentity/MacTools/releases/tag/v0.8.0
