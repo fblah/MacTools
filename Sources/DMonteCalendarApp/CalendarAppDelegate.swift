@@ -82,6 +82,12 @@ final class CalendarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         togglePanel()
     }
 

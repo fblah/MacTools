@@ -89,6 +89,12 @@ final class QRAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quitQR()
+        }) {
+            return
+        }
+
         showWindow(relativeTo: statusItem?.button)
     }
 

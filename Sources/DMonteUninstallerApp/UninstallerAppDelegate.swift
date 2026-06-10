@@ -91,6 +91,12 @@ final class UninstallerAppDelegate: NSObject, NSApplicationDelegate, NSWindowDel
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quitUninstaller()
+        }) {
+            return
+        }
+
         showWindow(relativeTo: statusItem?.button)
     }
 

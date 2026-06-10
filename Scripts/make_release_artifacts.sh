@@ -11,7 +11,103 @@ SPARKLE_SIGN_UPDATE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 ZIP_NAME="DMonte-Tool-Box-$VERSION.zip"
 ZIP_PATH="$ROOT_DIR/dist/$ZIP_NAME"
 APPCAST_PATH="$ROOT_DIR/dist/appcast.xml"
+RELEASE_NOTES_PATH="$ROOT_DIR/dist/release-notes.md"
 DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/download/$TAG_NAME/$ZIP_NAME"
+
+github_release_notes() {
+  [[ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]] || return 1
+
+  GITHUB_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}" \
+  REPOSITORY="$REPOSITORY" \
+  TAG_NAME="$TAG_NAME" \
+  python3 <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+token = os.environ["GITHUB_TOKEN"]
+repository = os.environ["REPOSITORY"]
+tag_name = os.environ["TAG_NAME"]
+url = f"https://api.github.com/repos/{repository}/releases/tags/{tag_name}"
+request = urllib.request.Request(
+    url,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "dmonte-release-script",
+    },
+)
+
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = json.load(response).get("body") or ""
+except (OSError, urllib.error.HTTPError, urllib.error.URLError):
+    sys.exit(1)
+
+body = body.strip()
+if not body:
+    sys.exit(1)
+
+print(body)
+PY
+}
+
+changelog_release_notes() {
+  VERSION="$VERSION" ROOT_DIR="$ROOT_DIR" python3 <<'PY'
+import os
+import re
+import sys
+from pathlib import Path
+
+version = os.environ["VERSION"]
+changelog = Path(os.environ["ROOT_DIR"]) / "CHANGELOG.md"
+if not changelog.exists():
+    sys.exit(1)
+
+text = changelog.read_text(encoding="utf-8")
+pattern = re.compile(
+    rf"^##\s+\[{re.escape(version)}\].*?\n(?P<body>.*?)(?=^##\s+\[|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+match = pattern.search(text)
+if not match:
+    sys.exit(1)
+
+body = match.group("body").strip()
+if not body:
+    sys.exit(1)
+
+print(body)
+PY
+}
+
+xml_escape() {
+  python3 -c '
+import html
+import sys
+
+print(html.escape(sys.stdin.read(), quote=False), end="")
+'
+}
+
+resolve_release_notes() {
+  if [[ -n "${RELEASE_NOTES_FILE:-}" && -s "$RELEASE_NOTES_FILE" ]]; then
+    sed '/./,$!d' "$RELEASE_NOTES_FILE"
+    return 0
+  fi
+
+  if [[ -n "${RELEASE_NOTES:-}" ]]; then
+    printf '%s\n' "$RELEASE_NOTES"
+    return 0
+  fi
+
+  github_release_notes && return 0
+  changelog_release_notes && return 0
+
+  printf "D'Monte's Tool Box %s release.\n" "$VERSION"
+}
 
 "$ROOT_DIR/Scripts/package_app.sh"
 
@@ -34,6 +130,9 @@ fi
 ed_signature="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' <<< "$signature_output")"
 archive_length="$(sed -n 's/.*length="\([^"]*\)".*/\1/p' <<< "$signature_output")"
 pub_date="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S %z')"
+release_notes="$(resolve_release_notes)"
+release_notes_xml="$(printf '%s' "$release_notes" | xml_escape)"
+printf '%s\n' "$release_notes" > "$RELEASE_NOTES_PATH"
 
 if [[ -z "$ed_signature" || -z "$archive_length" ]]; then
   echo "Could not parse Sparkle signature output: $signature_output" >&2
@@ -55,7 +154,8 @@ cat > "$APPCAST_PATH" <<XML
       <link>https://github.com/$REPOSITORY/releases/tag/$TAG_NAME</link>
       <sparkle:version>$BUILD_NUMBER</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
-      <description sparkle:format="plain-text">D'Monte's Tool Box $VERSION release.</description>
+      <sparkle:releaseNotesLink>https://github.com/$REPOSITORY/releases/tag/$TAG_NAME</sparkle:releaseNotesLink>
+      <description sparkle:format="plain-text">$release_notes_xml</description>
       <pubDate>$pub_date</pubDate>
       <enclosure
         url="$DOWNLOAD_URL"

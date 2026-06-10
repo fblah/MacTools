@@ -32,6 +32,7 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
             button.toolTip = "Volume Mixer"
             button.target = self
             button.action = #selector(togglePopover)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         self.statusItem = statusItem
 
@@ -47,6 +48,12 @@ final class VolumeMixerAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePopover() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         if let panel, panel.isVisible {
             closePopover()
         } else {

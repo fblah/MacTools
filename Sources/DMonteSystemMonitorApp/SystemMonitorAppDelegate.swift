@@ -101,6 +101,7 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
             button.toolTip = "System Monitor"
             button.target = self
             button.action = #selector(statusItemClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
             statusView.frame = button.bounds
             statusView.autoresizingMask = [.width, .height]
@@ -111,6 +112,12 @@ final class SystemMonitorAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quitSystemMonitor()
+        }) {
+            return
+        }
+
         togglePopover()
     }
 

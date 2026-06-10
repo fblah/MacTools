@@ -30,6 +30,7 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
             button.toolTip = "Audio Switcher"
             button.target = self
             button.action = #selector(togglePopover)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         self.statusItem = statusItem
 
@@ -45,6 +46,12 @@ final class AudioSwitcherAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePopover() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         if let panel, panel.isVisible {
             closePopover()
         } else {

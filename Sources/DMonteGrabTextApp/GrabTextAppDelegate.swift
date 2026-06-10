@@ -84,6 +84,12 @@ final class GrabTextAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quitGrabText()
+        }) {
+            return
+        }
+
         showWindow(relativeTo: statusItem?.button)
     }
 

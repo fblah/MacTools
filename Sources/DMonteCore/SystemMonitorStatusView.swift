@@ -52,6 +52,14 @@ public final class SystemMonitorStatusView: NSControl {
         // click to that button's target/action (set by the app delegate) so the popover toggles,
         // while preserving the legacy `onClick` closure if a caller still wires one up.
         onClick?()
+        forwardClickToStatusBarButton()
+    }
+
+    public override func rightMouseDown(with event: NSEvent) {
+        forwardClickToStatusBarButton()
+    }
+
+    private func forwardClickToStatusBarButton() {
         if let button = enclosingStatusBarButton(), let action = button.action {
             NSApp.sendAction(action, to: button.target, from: button)
         }

@@ -92,6 +92,12 @@ final class CleanDriveAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quitCleanDrive()
+        }) {
+            return
+        }
+
         showWindow(relativeTo: statusItem?.button)
     }
 

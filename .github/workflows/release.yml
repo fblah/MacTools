@@ -138,12 +138,15 @@ jobs:
             prerelease_flag="--prerelease"
           fi
           title="D'Monte's Tool Box $VERSION"
-          notes="D'Monte's Tool Box $VERSION release."
+          notes_file="dist/release-notes.md"
+          if [[ ! -s "$notes_file" ]]; then
+            printf "D'Monte's Tool Box %s release.\n" "$VERSION" > "$notes_file"
+          fi
 
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release edit "$TAG_NAME" \
               --title "$title" \
-              --notes "$notes" \
+              --notes-file "$notes_file" \
               $prerelease_flag
             gh release delete-asset "$TAG_NAME" "DMonte-Toolbox-$VERSION.zip" -y 2>/dev/null || true
             gh release delete-asset "$TAG_NAME" "DMonte-Tool-Box-$VERSION.zip" -y 2>/dev/null || true
@@ -156,6 +159,6 @@ jobs:
               "dist/DMonte-Tool-Box-$VERSION.zip" \
               "dist/appcast.xml" \
               --title "$title" \
-              --notes "$notes" \
+              --notes-file "$notes_file" \
               $prerelease_flag
           fi

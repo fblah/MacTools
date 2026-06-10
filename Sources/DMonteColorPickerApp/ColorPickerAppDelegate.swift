@@ -38,6 +38,7 @@ final class ColorPickerAppDelegate: NSObject, NSApplicationDelegate {
             button.toolTip = "Color Picker"
             button.target = self
             button.action = #selector(togglePopover)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
     }
 
@@ -59,6 +60,12 @@ final class ColorPickerAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Popover
 
     @objc private func togglePopover() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         if let popover, popover.isVisible {
             hidePopover()
         } else {

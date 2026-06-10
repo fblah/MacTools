@@ -4,6 +4,21 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.8.2] — 2026-06-10
+
+### Added
+- Right-click context menus on the Tool Box and menu bar tool icons now include
+  a Quit action.
+
+### Changed
+- Sparkle automatic update checks are enabled by default and run daily.
+- Release appcasts now embed release notes from the GitHub release body, with a
+  changelog fallback.
+
+### Fixed
+- Sparkle's "you're up to date" dialog no longer gets trapped behind the Tool
+  Box settings panel.
+
 ## [0.8.1] — 2026-06-09
 
 ### Added
@@ -137,6 +152,8 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
+[0.8.2]: https://github.com/havokentity/MacTools/releases/tag/v0.8.2
+[0.8.1]: https://github.com/havokentity/MacTools/releases/tag/v0.8.1
 [0.8.0]: https://github.com/havokentity/MacTools/releases/tag/v0.8.0
 [0.7.1]: https://github.com/havokentity/MacTools/releases/tag/v0.7.1
 [0.7.0]: https://github.com/havokentity/MacTools/releases/tag/v0.7.0

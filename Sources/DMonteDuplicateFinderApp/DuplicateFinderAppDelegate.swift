@@ -84,6 +84,12 @@ final class DuplicateFinderAppDelegate: NSObject, NSApplicationDelegate, NSWindo
     }
 
     @objc private func statusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: statusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         showWindow(relativeTo: statusItem?.button)
     }
 

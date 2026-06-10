@@ -14,11 +14,11 @@ private final class KeyableToolboxPanel: NSPanel {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let updaterController = SPUStandardUpdaterController(
+final class AppDelegate: NSObject, NSApplicationDelegate, SPUStandardUserDriverDelegate {
+    private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
-        userDriverDelegate: nil
+        userDriverDelegate: self
     )
     private var toolboxStatusItem: NSStatusItem?
     private var toolboxPanel: NSPanel?
@@ -92,6 +92,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toolboxStatusItemClicked() {
+        if StatusBarButtonContent.popUpQuitMenuIfNeeded(for: toolboxStatusItem, action: { [weak self] in
+            self?.quit()
+        }) {
+            return
+        }
+
         guard let button = toolboxStatusItem?.button else { return }
         toggleToolboxPopover(from: button)
     }
@@ -103,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.openTool(tool)
             },
             onCheckForUpdates: { [weak self] in
-                self?.updaterController.checkForUpdates(nil)
+                self?.checkForUpdates()
             },
             onQuit: { [weak self] in
                 self?.quit()
@@ -197,6 +203,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func closeToolboxPopover() {
         toolboxPanel?.orderOut(nil)
         stopOutsideClickMonitorIfIdle()
+    }
+
+    private func checkForUpdates() {
+        prepareForSparkleModal()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.updaterController.checkForUpdates(nil)
+        }
+    }
+
+    nonisolated func standardUserDriverWillShowModalAlert() {
+        Task { @MainActor [weak self] in
+            self?.prepareForSparkleModal()
+        }
+    }
+
+    private func prepareForSparkleModal() {
+        closeToolboxPopover()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
 

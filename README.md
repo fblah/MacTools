@@ -14,7 +14,7 @@ Grab the latest signed, notarized build from the [**Releases**](https://github.c
 2. Unzip and drag **DMonte Tool Box.app** to `/Applications`
 3. Launch it — the tool box icon appears in your menu bar
 
-The app updates itself automatically via [Sparkle](https://sparkle-project.org); new releases are delivered in the background.
+The app updates itself automatically via [Sparkle](https://sparkle-project.org); new releases are delivered in the background with release notes shown from the GitHub release feed.
 
 ## The tools
 
@@ -80,7 +80,7 @@ git tag v0.7.2
 git push origin main v0.7.2
 ```
 
-A `-rc` suffix (e.g. `v0.7.2-rc1`) publishes as a prerelease, so it's testable without reaching the auto‑update feed. See [`CHANGELOG.md`](CHANGELOG.md) for release history.
+A `-rc` suffix (e.g. `v0.7.2-rc1`) publishes as a prerelease, so it's testable without reaching the auto‑update feed. Release notes are embedded into the Sparkle appcast from the GitHub release body when one already exists, falling back to the matching section in [`CHANGELOG.md`](CHANGELOG.md).
 
 The auto‑update feed:
 

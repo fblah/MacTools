@@ -14,6 +14,18 @@ import AppKit
 /// menu bar), gets the standard rollover highlight for free, and is AppKit-managed content that
 /// the menu bar won't drop. `target`/`action` (set by the caller) handle the click.
 public enum StatusBarButtonContent {
+    private final class MenuAction: NSObject {
+        private let action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction() {
+            action()
+        }
+    }
+
     /// Installs a static template icon on the status item's button.
     /// - Parameters:
     ///   - image: the icon; forced to template so AppKit tints + highlights it.
@@ -35,6 +47,7 @@ public enum StatusBarButtonContent {
         button.toolTip = toolTip
         button.target = target
         button.action = action
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
     /// Installs a button driven by a live string (e.g. Focus Timer's countdown). Pass the icon
@@ -53,6 +66,7 @@ public enum StatusBarButtonContent {
         button.toolTip = toolTip
         button.target = target
         button.action = action
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         updateTitle(title, idleImage: idleImage, in: item)
     }
 
@@ -71,5 +85,30 @@ public enum StatusBarButtonContent {
             button.image = idleImage
             button.imagePosition = .imageOnly
         }
+    }
+
+    /// Shows a lightweight right-click context menu for a status item while preserving the
+    /// normal left-click action used by popovers/windows.
+    @MainActor
+    public static func popUpQuitMenuIfNeeded(
+        for item: NSStatusItem?,
+        quitTitle: String = "Quit",
+        action: @escaping () -> Void
+    ) -> Bool {
+        guard let eventType = NSApp.currentEvent?.type,
+              eventType == .rightMouseDown || eventType == .rightMouseUp,
+              let item,
+              let button = item.button else {
+            return false
+        }
+
+        let menu = NSMenu()
+        let handler = MenuAction(action: action)
+        let quitItem = NSMenuItem(title: quitTitle, action: #selector(MenuAction.performAction), keyEquivalent: "")
+        quitItem.target = handler
+        quitItem.representedObject = handler
+        menu.addItem(quitItem)
+        menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.midX, y: button.bounds.minY), in: button)
+        return true
     }
 }
