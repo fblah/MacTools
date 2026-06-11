@@ -24,6 +24,15 @@ adheres to [Semantic Versioning](https://semver.org) and the
   stereo‑mixdown tap instead of a device‑scoped one (which captured silence on
   some setups), and reconciles the sample rates of the source and routed outputs
   to a common rate so fixed‑rate outputs no longer drop to silence.
+- **Volume Mixer** routed‑playback level calibration: the render loop now maps
+  the tap's stereo frames onto the routed output's channel layout instead of
+  copying raw interleaved bytes. On outputs whose streams aren't plain stereo
+  (mono endpoints, 5.1/7.1 HDMI TVs and AVRs) the raw copy smeared frames
+  across channels, heard as quieter, garbled routed playback. Stereo now lands
+  on the front pair, unfed speaker channels get silence, and mono outputs get
+  the averaged pair. On stereo outputs the path is measured bit‑exact at
+  gain 1.0 — routed playback already matches direct playback level, so no
+  blanket makeup gain is applied.
 
 ## [0.8.8] — 2026-06-10
 

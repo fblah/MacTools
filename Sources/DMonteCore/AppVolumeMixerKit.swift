@@ -790,7 +790,7 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
         return noErr
     }
 
-    private static func render(
+    static func render(
         inputData: UnsafePointer<AudioBufferList>,
         outputData: UnsafeMutablePointer<AudioBufferList>,
         gain: Float
@@ -808,7 +808,9 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
                     MixerDebug.peak($0, byteCount: Int(inBytes))
                 } ?? 0
                 let outBytes = outputs.first?.mDataByteSize ?? 0
-                MixerDebug.log("render #\(renderCallCount) inputs=\(inputs.count) inBytes=\(inBytes) peak=\(String(format: "%.3f", peak)) outputs=\(outputs.count) outBytes=\(outBytes) gain=\(gain)")
+                let inChannels = inputs.first?.mNumberChannels ?? 0
+                let outChannels = outputs.first?.mNumberChannels ?? 0
+                MixerDebug.log("render #\(renderCallCount) inputs=\(inputs.count) inBytes=\(inBytes) inCh=\(inChannels) peak=\(String(format: "%.3f", peak)) outputs=\(outputs.count) outBytes=\(outBytes) outCh=\(outChannels) gain=\(gain)")
             }
         }
 
@@ -831,6 +833,25 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
                 if let outputData = output.mData, output.mDataByteSize > 0 {
                     memset(outputData, 0, Int(output.mDataByteSize))
                 }
+                outputs[outputIndex] = output
+                continue
+            }
+            let inChannels = Int(input.mNumberChannels)
+            let outChannels = Int(output.mNumberChannels)
+            let sampleSize = MemoryLayout<Float32>.size
+            if inChannels != outChannels, inChannels > 0, outChannels > 0,
+               Int(input.mDataByteSize).isMultiple(of: sampleSize * inChannels),
+               Int(output.mDataByteSize).isMultiple(of: sampleSize * outChannels) {
+                // The tap's frame layout (stereo mixdown) differs from this
+                // output's (mono, 5.1, 7.1 HDMI/AVR…). A raw interleaved copy
+                // would smear frames across channels — each speaker plays a
+                // time-decimated burst of the wrong channel, which is heard as
+                // quieter, garbled playback — so map per-frame instead.
+                renderChannelMapped(
+                    input: inputData, inChannels: inChannels, inBytes: Int(input.mDataByteSize),
+                    output: &output, outputData: outputData, outChannels: outChannels,
+                    gain: gain
+                )
                 outputs[outputIndex] = output
                 continue
             }
@@ -866,6 +887,65 @@ public final class AppVolumeMixerAudioEngine: @unchecked Sendable {
             }
             outputs[outputIndex] = output
         }
+    }
+
+    /// Frame-wise copy between interleaved float buffers with different channel
+    /// counts: source channels land on the same-numbered output channels (mono
+    /// fans out to both fronts), output channels with no source stay silent,
+    /// and a mono output gets the average of the source's front pair.
+    /// Runs on the realtime IO thread — strided vDSP only, no allocation.
+    private static func renderChannelMapped(
+        input inputData: UnsafeMutableRawPointer,
+        inChannels: Int,
+        inBytes: Int,
+        output: inout AudioBuffer,
+        outputData: UnsafeMutableRawPointer,
+        outChannels: Int,
+        gain: Float
+    ) {
+        let sampleSize = MemoryLayout<Float32>.size
+        let frames = min(inBytes / (sampleSize * inChannels), Int(output.mDataByteSize) / (sampleSize * outChannels))
+        let writtenBytes = frames * outChannels * sampleSize
+        if frames > 0 {
+            let source = inputData.assumingMemoryBound(to: Float32.self)
+            let destination = outputData.assumingMemoryBound(to: Float32.self)
+            if gain <= .ulpOfOne {
+                memset(outputData, 0, writtenBytes)
+            } else if outChannels == 1 {
+                // inChannels >= 2 here (1 == 1 takes the matched-layout path).
+                var scalar = gain * 0.5
+                vDSP_vasm(
+                    source, vDSP_Stride(inChannels),
+                    source.advanced(by: 1), vDSP_Stride(inChannels),
+                    &scalar,
+                    destination, 1,
+                    vDSP_Length(frames)
+                )
+            } else {
+                // A mono source feeds both front channels; extra source
+                // channels beyond the output's count are dropped.
+                let fedChannels = min(outChannels, max(inChannels, 2))
+                var scalar = gain
+                for channel in 0..<fedChannels {
+                    vDSP_vsmul(
+                        source.advanced(by: min(channel, inChannels - 1)), vDSP_Stride(inChannels),
+                        &scalar,
+                        destination.advanced(by: channel), vDSP_Stride(outChannels),
+                        vDSP_Length(frames)
+                    )
+                }
+                for channel in fedChannels..<outChannels {
+                    vDSP_vclr(
+                        destination.advanced(by: channel), vDSP_Stride(outChannels),
+                        vDSP_Length(frames)
+                    )
+                }
+            }
+        }
+        if Int(output.mDataByteSize) > writtenBytes {
+            memset(outputData.advanced(by: writtenBytes), 0, Int(output.mDataByteSize) - writtenBytes)
+        }
+        output.mDataByteSize = UInt32(writtenBytes)
     }
 }
 
