@@ -4,7 +4,7 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
-## [0.9.0] — Unreleased
+## [0.9.0] — 2026-06-11
 
 ### Added
 - **Audio Router** — a new menu bar tool for virtual audio routing:
