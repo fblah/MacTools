@@ -5,6 +5,31 @@ final class HelperPanelPlacementTests: XCTestCase {
     private let visibleFrame = NSRect(x: 0, y: 0, width: 1440, height: 875)
     private let panelSize = NSSize(width: 320, height: 400)
 
+    // MARK: - screenIndex
+
+    func testScreenIndexFindsScreenContainingPoint() {
+        let screens = [
+            NSRect(x: -1440, y: 0, width: 1440, height: 900),
+            NSRect(x: 0, y: 0, width: 2560, height: 1440),
+            NSRect(x: 2560, y: 0, width: 1920, height: 1080)
+        ]
+
+        XCTAssertEqual(HelperPanelPlacement.screenIndex(containing: NSPoint(x: -200, y: 880), in: screens), 0)
+        XCTAssertEqual(HelperPanelPlacement.screenIndex(containing: NSPoint(x: 100, y: 1400), in: screens), 1)
+        XCTAssertEqual(HelperPanelPlacement.screenIndex(containing: NSPoint(x: 3000, y: 1000), in: screens), 2)
+    }
+
+    func testScreenIndexUsesHalfOpenEdgesForAdjacentScreens() {
+        let screens = [
+            NSRect(x: 0, y: 0, width: 1000, height: 900),
+            NSRect(x: 1000, y: 0, width: 1000, height: 900)
+        ]
+
+        XCTAssertEqual(HelperPanelPlacement.screenIndex(containing: NSPoint(x: 999.99, y: 100), in: screens), 0)
+        XCTAssertEqual(HelperPanelPlacement.screenIndex(containing: NSPoint(x: 1000, y: 100), in: screens), 1)
+        XCTAssertNil(HelperPanelPlacement.screenIndex(containing: NSPoint(x: 2000, y: 100), in: screens))
+    }
+
     // MARK: - centeredFrame
 
     func testCenteredFrameCentersOnVisibleFrame() {

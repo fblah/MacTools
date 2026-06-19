@@ -38,6 +38,12 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         configurePanel()
         configureStatusItem()
         configureShowNotification()
+
+        if CommandLine.arguments.contains("--open") {
+            DispatchQueue.main.async { [weak self] in
+                self?.showPanel()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -98,7 +104,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        togglePanel()
+        togglePanel(preferredScreenPoint: NSEvent.mouseLocation)
     }
 
     private func configureShowNotification() {
@@ -116,15 +122,15 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Panel show/hide
 
-    private func togglePanel() {
+    private func togglePanel(preferredScreenPoint: NSPoint? = nil) {
         if panel?.isVisible == true {
             closePanel()
         } else {
-            showPanel()
+            showPanel(preferredScreenPoint: preferredScreenPoint)
         }
     }
 
-    private func showPanel() {
+    private func showPanel(preferredScreenPoint: NSPoint? = nil) {
         guard let panel else { return }
 
         // Resolve and freeze the snap target FIRST. With separate Spaces, the status-item click
@@ -139,7 +145,7 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
 
         let size = WindowManagerSizing.preferredSize()
         panel.setContentSize(size)
-        panel.setFrame(panelFrame(for: size), display: true)
+        panel.setFrame(panelFrame(for: size, preferredScreenPoint: preferredScreenPoint), display: true)
 
         // No NSApp.activate here: the panel must not steal activation from the user's app
         // (.nonactivatingPanel), and the target snapshot above must stay the last meaningful one.
@@ -154,26 +160,44 @@ final class WindowManagerAppDelegate: NSObject, NSApplicationDelegate {
         controller.popoverDidClose()
     }
 
-    private func panelFrame(for size: NSSize) -> NSRect {
+    private func panelFrame(for size: NSSize, preferredScreenPoint: NSPoint? = nil) -> NSRect {
+        if let preferredScreenPoint, let screen = Self.screen(containing: preferredScreenPoint) {
+            let buttonSize = statusItem?.button?.bounds.size ?? NSSize(width: 24, height: 24)
+            let anchorFrame = NSRect(
+                x: preferredScreenPoint.x - buttonSize.width / 2,
+                y: preferredScreenPoint.y - buttonSize.height / 2,
+                width: buttonSize.width,
+                height: buttonSize.height
+            )
+            return HelperPanelPlacement.anchoredFrame(
+                for: size,
+                anchorFrame: anchorFrame,
+                visibleFrame: screen.visibleFrame
+            )
+        }
+
         guard let statusButton = statusItem?.button, let window = statusButton.window, let screen = window.screen ?? NSScreen.main else {
-            let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            return NSRect(
-                x: visibleFrame.midX - size.width / 2,
-                y: visibleFrame.midY - size.height / 2,
-                width: size.width,
-                height: size.height
+            return HelperPanelPlacement.centeredFrame(
+                for: size,
+                visibleFrame: NSScreen.main?.visibleFrame ?? HelperPanelPlacement.fallbackVisibleFrame
             )
         }
 
         let viewFrameInWindow = statusButton.convert(statusButton.bounds, to: nil)
         let anchorFrame = window.convertToScreen(viewFrameInWindow)
-        let visibleFrame = screen.visibleFrame
-        let x = min(
-            max(anchorFrame.midX - size.width / 2, visibleFrame.minX + 8),
-            visibleFrame.maxX - size.width - 8
+        return HelperPanelPlacement.anchoredFrame(
+            for: size,
+            anchorFrame: anchorFrame,
+            visibleFrame: screen.visibleFrame
         )
-        let y = max(visibleFrame.minY + 8, anchorFrame.minY - size.height - 8)
-        return NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    private static func screen(containing point: NSPoint) -> NSScreen? {
+        let screens = NSScreen.screens
+        guard let index = HelperPanelPlacement.screenIndex(containing: point, in: screens.map(\.frame)) else {
+            return nil
+        }
+        return screens[index]
     }
 
     // MARK: - Event monitors

@@ -13,8 +13,8 @@ final class ActivationTrackerTests: XCTestCase {
     /// Fixed "now" so ages are deterministic.
     private let now = Date(timeIntervalSinceReferenceDate: 100_000)
 
-    private func entry(pid: pid_t, name: String? = nil, age: TimeInterval) -> ActivationTracker.Entry {
-        ActivationTracker.Entry(pid: pid, name: name, at: now.addingTimeInterval(-age))
+    private func entry(pid: pid_t, name: String? = nil, age: TimeInterval, isUserSelection: Bool = false) -> ActivationTracker.Entry {
+        ActivationTracker.Entry(pid: pid, name: name, at: now.addingTimeInterval(-age), isUserSelection: isUserSelection)
     }
 
     // MARK: - Pure resolution
@@ -52,6 +52,30 @@ final class ActivationTrackerTests: XCTestCase {
         XCTAssertEqual(history, [user], "the skipped entry is dropped so reopening resolves consistently")
     }
 
+    func testRecentRealActivationOutsideWarmClickWindowIsKept() {
+        // Selecting a new window and then going to the menu bar can be quick. Only the very tight
+        // warm status-item reactivation window should be skipped; otherwise the newly selected
+        // window is the user's real target.
+        let older = entry(pid: 1, name: "Older", age: 30)
+        let selected = entry(pid: 2, name: "Selected", age: 0.25)
+        var history = [older, selected]
+        let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
+        XCTAssertEqual(result, .mostRecent(selected))
+        XCTAssertEqual(history, [older, selected])
+    }
+
+    func testYoungUserWindowSelectionIsNotSkipped() {
+        // Same-app window switches do not send an app activation notification, so the controller
+        // records mouse-selected windows separately. Those explicit selections must survive even
+        // when they are very close to opening the tray.
+        let older = entry(pid: 1, name: "Older", age: 30)
+        let selected = entry(pid: 2, name: "Selected", age: 0.05, isUserSelection: true)
+        var history = [older, selected]
+        let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
+        XCTAssertEqual(result, .mostRecent(selected))
+        XCTAssertEqual(history, [older, selected])
+    }
+
     func testSkipSearchesPastSamePidPredecessors() {
         // The spurious shift can re-activate an app that already has history entries; the skip
         // must find the nearest *different* pid, not just the literal previous entry.
@@ -81,9 +105,9 @@ final class ActivationTrackerTests: XCTestCase {
         XCTAssertEqual(history.count, 2)
     }
 
-    func testAgeAtExactlyTheWindowIsNotSuspicious() {
+    func testAgeJustOutsideTheWindowIsNotSuspicious() {
         let older = entry(pid: 1, age: 30)
-        let boundary = entry(pid: 2, age: ActivationTracker.spuriousActivationWindow)
+        let boundary = entry(pid: 2, age: ActivationTracker.spuriousActivationWindow + 0.001)
         var history = [older, boundary]
         let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
         XCTAssertEqual(result, .mostRecent(boundary))

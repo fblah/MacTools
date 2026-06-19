@@ -4,6 +4,17 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.9.1] — 2026-06-19
+
+### Fixed
+- Window Manager now opens its panel immediately when launched from the Tool Box
+  while it is not already running.
+- Window Manager better preserves the intended target window across menu-bar
+  opens, same-app window selections, keypad Return shortcuts, and multi-display
+  status-item placement.
+- Uninstaller search can no longer leave a hidden previously selected app active
+  in the details pane while the filtered sidebar shows different results.
+
 ## [0.9.0] — 2026-06-11
 
 ### Added

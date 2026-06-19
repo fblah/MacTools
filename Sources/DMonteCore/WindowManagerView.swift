@@ -19,6 +19,7 @@ final class ShortcutRecorder: ObservableObject {
     func begin(for action: WindowAction, onCapture: @escaping (WindowShortcut?) -> Void) {
         cancel()
         recordingAction = action
+        NSApp.keyWindow?.makeFirstResponder(nil)
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
             object: nil,
@@ -35,15 +36,23 @@ final class ShortcutRecorder: ObservableObject {
                 self.end()
                 onCapture(nil)
             } else {
-                let shortcut = WindowShortcut(
-                    keyCode: UInt32(event.keyCode),
-                    modifiers: Self.carbonModifiers(from: event.modifierFlags)
-                )
+                let shortcut = Self.shortcut(from: event)
                 self.end()
                 onCapture(shortcut)
             }
             return nil // swallow the keystroke
         }
+    }
+
+    static func shortcut(from event: NSEvent) -> WindowShortcut {
+        WindowShortcut(
+            keyCode: normalizedKeyCode(UInt32(event.keyCode)),
+            modifiers: carbonModifiers(from: event.modifierFlags)
+        )
+    }
+
+    static func normalizedKeyCode(_ keyCode: UInt32) -> UInt32 {
+        keyCode == HotKeyCode.keypadEnter ? HotKeyCode.returnKey : keyCode
     }
 
     /// Stops recording without capturing.

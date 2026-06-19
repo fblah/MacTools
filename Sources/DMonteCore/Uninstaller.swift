@@ -96,6 +96,28 @@ public enum ApplicationScanner {
     }
 }
 
+enum UninstallerSelection {
+    static func filteredApps(_ apps: [InstalledApplication], query rawQuery: String) -> [InstalledApplication] {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !query.isEmpty else {
+            return apps
+        }
+
+        return apps.filter {
+            $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    static func selectedApp(in filteredApps: [InstalledApplication], selectedID: InstalledApplication.ID?) -> InstalledApplication? {
+        guard let selectedID else {
+            return filteredApps.first
+        }
+
+        return filteredApps.first { $0.id == selectedID } ?? filteredApps.first
+    }
+}
+
 public struct UninstallerPopoverView: View {
     var onQuit: () -> Void
 
@@ -205,7 +227,7 @@ public struct UninstallerPopoverView: View {
                 ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(filteredApps) { app in
-                            AppRow(app: app, isSelected: app.id == selectedAppID) {
+                            AppRow(app: app, isSelected: app.id == selectedApp?.id) {
                                 selectedAppID = app.id
                             }
                         }
@@ -290,23 +312,11 @@ public struct UninstallerPopoverView: View {
     }
 
     private var filteredApps: [InstalledApplication] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !query.isEmpty else {
-            return apps
-        }
-
-        return apps.filter {
-            $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query)
-        }
+        UninstallerSelection.filteredApps(apps, query: searchText)
     }
 
     private var selectedApp: InstalledApplication? {
-        guard let selectedAppID else {
-            return filteredApps.first
-        }
-
-        return apps.first { $0.id == selectedAppID } ?? filteredApps.first
+        UninstallerSelection.selectedApp(in: filteredApps, selectedID: selectedAppID)
     }
 
     private func reload() async {

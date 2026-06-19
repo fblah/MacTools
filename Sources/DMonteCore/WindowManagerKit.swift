@@ -77,6 +77,7 @@ public enum HotKeyCode {
     public static let down: UInt32 = 0x7D
     public static let up: UInt32 = 0x7E
     public static let returnKey: UInt32 = 0x24
+    public static let keypadEnter: UInt32 = 0x4C
     public static let c: UInt32 = 0x08
 }
 

@@ -73,6 +73,13 @@ final class WindowShortcutTests: XCTestCase {
         XCTAssertEqual(ShortcutRecorder.carbonModifiers(from: []), 0)
     }
 
+    @MainActor
+    func testRecorderNormalizesKeypadEnterToReturn() {
+        XCTAssertEqual(ShortcutRecorder.normalizedKeyCode(HotKeyCode.keypadEnter), HotKeyCode.returnKey)
+        XCTAssertEqual(ShortcutRecorder.normalizedKeyCode(HotKeyCode.returnKey), HotKeyCode.returnKey)
+        XCTAssertEqual(ShortcutRecorder.normalizedKeyCode(HotKeyCode.left), HotKeyCode.left)
+    }
+
     // MARK: - Store
 
     private func scratchDefaults() -> UserDefaults {

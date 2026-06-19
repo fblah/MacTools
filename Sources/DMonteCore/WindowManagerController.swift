@@ -55,20 +55,36 @@ public final class WindowManagerController: NSObject, ObservableObject {
 
     private var hotKeys: [GlobalHotKey] = []
     private var permissionTimer: Timer?
+    private var windowSelectionMonitor: Any?
     private let shortcutStore: WindowShortcutStore
 
-    /// The pid of the app snapshotted at popover-show time; the popover's tiles snap this app,
-    /// never the live frontmost. A pid, not an `NSRunningApplication` reference: the instances
-    /// delivered in notification userInfo are not retained by anyone else, so a weak reference
-    /// dies within a runloop turn (observed live: the history pruned itself empty), and a strong
-    /// one would pin a quit app. The pid is re-resolved to a live app at apply time.
-    private var popoverTargetPID: pid_t?
+    /// The target snapshotted at popover-show time; the popover's tiles snap this target, never
+    /// the live frontmost. Stores pid + focused-window frame, not live object references: the
+    /// running app is re-resolved at apply time and the window frame is used as a fingerprint
+    /// when an app has multiple windows.
+    private var popoverTarget: TargetSnapshot?
 
     /// History of non-suite app activations, so resolving the popover target can find "the app
     /// that was active *before* the status-item click" — the click's own spurious activation can
     /// land before we run (see `popoverWillShow()`). The tracker's session freezes the history
     /// while the popover is open; `targetApplication()` uses the pid snapshot during it.
     private let activationTracker: ActivationTracker
+
+    private struct TargetSnapshot {
+        let pid: pid_t
+        let appName: String?
+        let windowSnapshot: ActivationTracker.WindowSnapshot?
+
+        init(app: NSRunningApplication, windowSnapshot: ActivationTracker.WindowSnapshot? = nil) {
+            self.pid = app.processIdentifier
+            self.appName = app.localizedName
+            self.windowSnapshot = windowSnapshot
+        }
+
+        var app: NSRunningApplication? {
+            ActivationTracker.liveApp(pid)
+        }
+    }
 
     private static let log = Logger(subsystem: "com.havokentity.mactools.windowmanager", category: "snap")
 
@@ -92,6 +108,11 @@ public final class WindowManagerController: NSObject, ObservableObject {
     /// works around it the same way: clear the flag around the writes, restore it after.
     private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface"
 
+    /// Private but widely implemented AX attribute that bridges AX windows to Quartz window ids.
+    /// It lets popover snaps re-find the exact selected window after the menu-bar click changes
+    /// focus within the target app.
+    private static let windowNumberAttribute = "AXWindowNumber"
+
     public init(defaults: UserDefaults? = nil) {
         let store = WindowShortcutStore(defaults: defaults ?? AppDefaults.shared)
         shortcutStore = store
@@ -102,9 +123,11 @@ public final class WindowManagerController: NSObject, ObservableObject {
         // about which window the user wants snapped.
         activationTracker = ActivationTracker(
             logger: WindowManagerController.log,
-            excluding: { WindowManagerController.isSuiteApplication($0) }
+            excluding: { WindowManagerController.isSuiteApplication($0) },
+            windowSnapshot: { WindowManagerController.focusedWindowSnapshot(of: $0) }
         )
         super.init()
+        startWindowSelectionMonitor()
     }
 
     // No `deinit` cleanup: under Swift 6 a nonisolated deinit may not touch the @MainActor,
@@ -136,33 +159,61 @@ public final class WindowManagerController: NSObject, ObservableObject {
     /// popover session) keep using the live frontmost app.
     public func popoverWillShow() {
         let candidate = resolvePopoverTarget()
-        popoverTargetPID = candidate?.processIdentifier
+        popoverTarget = candidate
         activationTracker.beginSession()
-        popoverTargetName = candidate?.localizedName
-        Self.log.info("popover target: \(candidate?.localizedName ?? "none", privacy: .public)")
+        popoverTargetName = candidate?.appName
+        Self.log.info("popover target: \(candidate?.appName ?? "none", privacy: .public)")
     }
 
     /// The app the user was meaningfully working in at popover-open (the tracker's history
     /// resolution, including the suspicious-activation skip). Falls back to the live frontmost
     /// app (never one of ours) when no history exists yet, e.g. right after launch.
-    private func resolvePopoverTarget() -> NSRunningApplication? {
-        if let target = activationTracker.resolveTarget() {
-            return target
+    private func resolvePopoverTarget() -> TargetSnapshot? {
+        if let entry = activationTracker.resolveTargetEntry(), let target = ActivationTracker.liveApp(entry.pid) {
+            return TargetSnapshot(
+                app: target,
+                windowSnapshot: entry.windowSnapshot ?? Self.focusedWindowSnapshot(of: target)
+            )
         }
 
         if let frontmost = NSWorkspace.shared.frontmostApplication, !Self.isSuiteApplication(frontmost) {
             Self.log.debug("resolve: no history, frontmost \(frontmost.localizedName ?? "?", privacy: .public)")
-            return frontmost
+            return TargetSnapshot(app: frontmost, windowSnapshot: Self.focusedWindowSnapshot(of: frontmost))
         }
         Self.log.debug("resolve: no history, topmost-other fallback")
-        return topmostOtherApplication()
+        return topmostOtherApplication().map { TargetSnapshot(app: $0, windowSnapshot: Self.focusedWindowSnapshot(of: $0)) }
     }
 
     /// Ends the popover session: snaps go back to live frontmost resolution (hotkeys).
     public func popoverDidClose() {
         activationTracker.endSession()
-        popoverTargetPID = nil
+        popoverTarget = nil
         popoverTargetName = nil
+    }
+
+    private func startWindowSelectionMonitor() {
+        windowSelectionMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+                self?.recordCurrentWindowSelection()
+            }
+        }
+    }
+
+    private func recordCurrentWindowSelection() {
+        guard !activationTracker.isSessionActive,
+              let app = NSWorkspace.shared.frontmostApplication,
+              !Self.isSuiteApplication(app),
+              let snapshot = Self.focusedWindowSnapshot(of: app) else { return }
+
+        activationTracker.record(
+            ActivationTracker.Entry(
+                pid: app.processIdentifier,
+                name: app.localizedName,
+                at: Date(),
+                windowSnapshot: snapshot,
+                isUserSelection: true
+            )
+        )
     }
 
     // MARK: - Permission
@@ -229,22 +280,42 @@ public final class WindowManagerController: NSObject, ObservableObject {
         var nextID: UInt32 = 1
         for action in WindowAction.allCases {
             guard let shortcut = shortcuts[action] else { continue }
-            let id = nextID
-            nextID += 1
-            do {
-                let key = try GlobalHotKey.register(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, id: id) { [weak self] in
-                    Task { @MainActor in
-                        self?.apply(action)
+            let keyCodes = Self.registrationKeyCodes(for: shortcut).filter { keyCode in
+                keyCode == shortcut.keyCode || actionUsing(WindowShortcut(keyCode: keyCode, modifiers: shortcut.modifiers), excluding: action) == nil
+            }
+            for keyCode in keyCodes {
+                let id = nextID
+                nextID += 1
+                do {
+                    let key = try GlobalHotKey.register(keyCode: keyCode, modifiers: shortcut.modifiers, id: id) { [weak self] in
+                        Task { @MainActor in
+                            self?.apply(action)
+                        }
+                    }
+                    hotKeys.append(key)
+                } catch let error as GlobalHotKeyRegistrationError {
+                    if keyCode == shortcut.keyCode {
+                        registrationFailures[action] = Self.statusCode(for: error)
+                    }
+                } catch {
+                    if keyCode == shortcut.keyCode {
+                        registrationFailures[action] = -1
                     }
                 }
-                hotKeys.append(key)
-            } catch let error as GlobalHotKeyRegistrationError {
-                registrationFailures[action] = Self.statusCode(for: error)
-            } catch {
-                registrationFailures[action] = -1
             }
         }
         secureInputBlocked = SecureInputState.isBlockingHotKeys
+    }
+
+    private static func registrationKeyCodes(for shortcut: WindowShortcut) -> [UInt32] {
+        switch shortcut.keyCode {
+        case HotKeyCode.returnKey:
+            return [HotKeyCode.returnKey, HotKeyCode.keypadEnter]
+        case HotKeyCode.keypadEnter:
+            return [HotKeyCode.keypadEnter, HotKeyCode.returnKey]
+        default:
+            return [shortcut.keyCode]
+        }
     }
 
     /// Releases every registered hotkey (used when Accessibility is revoked: holding combos we
@@ -311,18 +382,18 @@ public final class WindowManagerController: NSObject, ObservableObject {
         }
         hasAccessibility = true
 
-        guard let targetApp = targetApplication() else {
+        guard let target = targetApplication(), let targetApp = target.app else {
             return .noFocusedWindow
         }
         let appElement = AXUIElementCreateApplication(targetApp.processIdentifier)
         // Bound how long a hung app may block us; without this a beachballing app freezes the
         // helper (and the popover) for the system default of several seconds per call.
         AXUIElementSetMessagingTimeout(appElement, Self.axMessagingTimeoutSeconds)
-        guard let window = focusedWindow(of: appElement) else {
+        guard let window = target.windowSnapshot.flatMap({ Self.window(in: appElement, matching: $0) }) ?? Self.focusedWindow(of: appElement) else {
             return .noFocusedWindow
         }
 
-        guard let currentFrame = frame(of: window) else {
+        guard let currentFrame = Self.frame(of: window) else {
             return .failed
         }
 
@@ -338,9 +409,9 @@ public final class WindowManagerController: NSObject, ObservableObject {
             return .failed
         }
         let axArea = Self.axRect(fromCocoa: screen.visibleFrame)
-        let target = WindowManagerKit.frame(for: action, in: axArea)
+        let targetFrame = WindowManagerKit.frame(for: action, in: axArea)
 
-        return setFrameVerified(target, on: window, appElement: appElement, appName: targetApp.localizedName)
+        return setFrameVerified(targetFrame, on: window, appElement: appElement, appName: targetApp.localizedName)
     }
 
     /// Writes `target` to the window and verifies it landed, retrying with alternating set
@@ -371,7 +442,7 @@ public final class WindowManagerController: NSObject, ObservableObject {
             }
             // Tiny settle so apps that apply geometry asynchronously finish before the read-back.
             usleep(Self.frameVerifyDelayMicroseconds)
-            guard let now = frame(of: window) else {
+            guard let now = Self.frame(of: window) else {
                 return .failed
             }
             achieved = now
@@ -437,13 +508,13 @@ public final class WindowManagerController: NSObject, ObservableObject {
     /// window on the primary display while the user's window on another display stays put is
     /// exactly the "moves the wrong window" bug. In that case we target the topmost ordinary
     /// window owned by any other app instead.
-    private func targetApplication() -> NSRunningApplication? {
-        if activationTracker.isSessionActive, let pid = popoverTargetPID, let snapshot = ActivationTracker.liveApp(pid) {
+    private func targetApplication() -> TargetSnapshot? {
+        if activationTracker.isSessionActive, let snapshot = popoverTarget {
             return snapshot // non-suite by construction (popoverWillShow filters)
         }
         guard let frontmost = NSWorkspace.shared.frontmostApplication else { return nil }
-        if !Self.isSuiteApplication(frontmost) { return frontmost }
-        return topmostOtherApplication()
+        if !Self.isSuiteApplication(frontmost) { return TargetSnapshot(app: frontmost) }
+        return topmostOtherApplication().map { TargetSnapshot(app: $0) }
     }
 
     private static func isSuiteApplication(_ app: NSRunningApplication) -> Bool {
@@ -470,7 +541,14 @@ public final class WindowManagerController: NSObject, ObservableObject {
 
     // MARK: - Accessibility element access
 
-    private func focusedWindow(of appElement: AXUIElement) -> AXUIElement? {
+    private static func focusedWindowSnapshot(of app: NSRunningApplication) -> ActivationTracker.WindowSnapshot? {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeoutSeconds)
+        guard let window = focusedWindow(of: appElement) else { return nil }
+        return ActivationTracker.WindowSnapshot(frame: frame(of: window), number: windowNumber(of: window))
+    }
+
+    private static func focusedWindow(of appElement: AXUIElement) -> AXUIElement? {
         var windowRef: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef)
         guard status == .success, let windowRef,
@@ -480,7 +558,47 @@ public final class WindowManagerController: NSObject, ObservableObject {
         return window
     }
 
-    private func frame(of window: AXUIElement) -> CGRect? {
+    private static func window(in appElement: AXUIElement, matching snapshot: ActivationTracker.WindowSnapshot) -> AXUIElement? {
+        if let number = snapshot.number, let window = window(in: appElement, matchingNumber: number) {
+            return window
+        }
+        if let frame = snapshot.frame, let window = window(in: appElement, matchingFrame: frame) {
+            return window
+        }
+        return nil
+    }
+
+    private static func window(in appElement: AXUIElement, matchingNumber targetNumber: Int) -> AXUIElement? {
+        windows(of: appElement).first { windowNumber(of: $0) == targetNumber }
+    }
+
+    private static func window(in appElement: AXUIElement, matchingFrame targetFrame: CGRect) -> AXUIElement? {
+        windows(of: appElement).first { window in
+            guard let frame = frame(of: window) else { return false }
+            return WindowManagerKit.frameMatches(frame, target: targetFrame, tolerance: 4)
+        }
+    }
+
+    private static func windows(of appElement: AXUIElement) -> [AXUIElement] {
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let windows = windowsRef as? [AXUIElement] else { return [] }
+
+        for window in windows {
+            AXUIElementSetMessagingTimeout(window, axMessagingTimeoutSeconds)
+        }
+        return windows
+    }
+
+    private static func windowNumber(of window: AXUIElement) -> Int? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, windowNumberAttribute as CFString, &ref) == .success,
+              let ref else { return nil }
+        if let int = ref as? Int { return int }
+        return (ref as? NSNumber)?.intValue
+    }
+
+    private static func frame(of window: AXUIElement) -> CGRect? {
         guard let position = axValue(window, kAXPositionAttribute, type: .cgPoint, as: CGPoint.self),
               let size = axValue(window, kAXSizeAttribute, type: .cgSize, as: CGSize.self) else {
             return nil
@@ -503,7 +621,7 @@ public final class WindowManagerController: NSObject, ObservableObject {
     }
 
     /// Reads an AXValue attribute and unwraps it to a concrete CG type.
-    private func axValue<T>(_ element: AXUIElement, _ attribute: String, type: AXValueType, as: T.Type) -> T? {
+    private static func axValue<T>(_ element: AXUIElement, _ attribute: String, type: AXValueType, as: T.Type) -> T? {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success,
               let ref, CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }

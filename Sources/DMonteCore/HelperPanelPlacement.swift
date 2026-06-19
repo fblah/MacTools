@@ -14,6 +14,18 @@ public enum HelperPanelPlacement {
     /// Inset kept between a positioned panel/window and the screen's visible-frame edges.
     public static let screenEdgeInset: CGFloat = 8
 
+    /// Returns the index of the screen frame containing `point`, using the same half-open edge
+    /// convention as AppKit hit-testing: left/bottom edges are inside, right/top edges belong to
+    /// the adjacent screen when displays touch.
+    public static func screenIndex(containing point: NSPoint, in screenFrames: [NSRect]) -> Int? {
+        screenFrames.firstIndex { frame in
+            point.x >= frame.minX &&
+                point.x < frame.maxX &&
+                point.y >= frame.minY &&
+                point.y < frame.maxY
+        }
+    }
+
     /// A frame of `size` centered in `visibleFrame` (the historic fallback when there is no
     /// status-item anchor to position near).
     public static func centeredFrame(for size: NSSize, visibleFrame: NSRect) -> NSRect {
