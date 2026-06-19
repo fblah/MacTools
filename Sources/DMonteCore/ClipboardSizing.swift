@@ -3,7 +3,7 @@ import AppKit
 public enum ClipboardSizing {
     public static func preferredSize() -> NSSize {
         let scale = currentScale
-        return NSSize(width: (380 * scale).rounded(), height: (540 * scale).rounded())
+        return NSSize(width: (460 * scale).rounded(), height: (790 * scale).rounded())
     }
 
     static var currentScale: CGFloat {
