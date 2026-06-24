@@ -47,4 +47,74 @@ final class VideoDownloaderTests: XCTestCase {
             mergedURL
         )
     }
+
+    func testNormalizedURLPreservesCaseSensitiveVideoID() {
+        // The dedup key must not case-fold the path: these are two different videos.
+        let upper = VideoDownloaderModel.normalizedURLString("https://www.youtube.com/shorts/wLOWk_RR1dg")
+        let lower = VideoDownloaderModel.normalizedURLString("https://www.youtube.com/shorts/wlowk_rr1dg")
+
+        XCTAssertEqual(upper, "https://www.youtube.com/shorts/wLOWk_RR1dg")
+        XCTAssertNotEqual(upper, lower)
+    }
+
+    func testNormalizedURLPreservesCaseSensitiveQueryValue() {
+        let key = VideoDownloaderModel.normalizedURLString("https://www.youtube.com/watch?v=wLOWk_RR1dg")
+        XCTAssertEqual(key, "https://www.youtube.com/watch?v=wLOWk_RR1dg")
+    }
+
+    func testNormalizedURLLowercasesSchemeAndHostOnly() {
+        // Scheme and host are case-insensitive, so casing differences there still dedup,
+        // while the path keeps its case.
+        let a = VideoDownloaderModel.normalizedURLString("HTTPS://WWW.YouTube.com/shorts/wLOWk_RR1dg")
+        let b = VideoDownloaderModel.normalizedURLString("https://www.youtube.com/shorts/wLOWk_RR1dg")
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(a, "https://www.youtube.com/shorts/wLOWk_RR1dg")
+    }
+
+    func testNormalizedURLStripsTrailingSlashFragmentAndTracking() {
+        let key = VideoDownloaderModel.normalizedURLString(
+            "  https://www.youtube.com/shorts/wLOWk_RR1dg/?utm_source=share&igshid=abc#t=10s  "
+        )
+        XCTAssertEqual(key, "https://www.youtube.com/shorts/wLOWk_RR1dg")
+    }
+
+    func testNormalizedURLKeepsNonTrackingQueryAfterStrippingTracking() {
+        let key = VideoDownloaderModel.normalizedURLString(
+            "https://www.youtube.com/watch?v=wLOWk_RR1dg&utm_medium=email"
+        )
+        XCTAssertEqual(key, "https://www.youtube.com/watch?v=wLOWk_RR1dg")
+    }
+
+    func testSubtitleEnglishAndSystemNeverRequestsAll() {
+        // The whole point of the fix: this mode never emits "all" (triggers YouTube's 429).
+        let langs = VideoSubtitleMode.englishAndSystem.subtitleLanguageArgument(preferredLanguages: ["fr-FR", "de-DE"])
+        XCTAssertEqual(langs, "en.*,fr.*")
+        XCTAssertEqual(langs?.contains("all"), false)
+    }
+
+    func testSubtitleEnglishAndSystemAlwaysIncludesEnglish() {
+        XCTAssertEqual(
+            VideoSubtitleMode.englishAndSystem.subtitleLanguageArgument(preferredLanguages: ["pt-BR"]),
+            "en.*,pt.*"
+        )
+    }
+
+    func testSubtitleEnglishAndSystemDeduplicatesEnglish() {
+        // System language already English: don't list "en" twice.
+        XCTAssertEqual(VideoSubtitleMode.englishAndSystem.subtitleLanguageArgument(preferredLanguages: ["en-US"]), "en.*")
+        XCTAssertEqual(VideoSubtitleMode.englishAndSystem.subtitleLanguageArgument(preferredLanguages: []), "en.*")
+    }
+
+    func testSubtitleEnglishOnlyAndAllAndOff() {
+        XCTAssertEqual(VideoSubtitleMode.englishOnly.subtitleLanguageArgument(preferredLanguages: ["fr-FR"]), "en.*")
+        XCTAssertEqual(VideoSubtitleMode.allLanguages.subtitleLanguageArgument(preferredLanguages: ["fr-FR"]), "all")
+        XCTAssertNil(VideoSubtitleMode.off.subtitleLanguageArgument(preferredLanguages: ["en-US"]))
+    }
+
+    func testOnlyAllLanguagesToleratesSubtitleFailures() {
+        XCTAssertTrue(VideoSubtitleMode.allLanguages.allowsSubtitleFailures)
+        XCTAssertFalse(VideoSubtitleMode.englishAndSystem.allowsSubtitleFailures)
+        XCTAssertFalse(VideoSubtitleMode.englishOnly.allowsSubtitleFailures)
+        XCTAssertFalse(VideoSubtitleMode.off.allowsSubtitleFailures)
+    }
 }
