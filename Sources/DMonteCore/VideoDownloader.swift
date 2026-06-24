@@ -50,6 +50,53 @@ public enum VideoNonMP4Handling: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public enum VideoSubtitleMode: String, CaseIterable, Identifiable, Sendable {
+    case off
+    case englishOnly
+    case englishAndSystem
+    case allLanguages
+
+    public var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: "Off"
+        case .englishOnly: "English only"
+        case .englishAndSystem: "English + system language"
+        case .allLanguages: "All languages (slower)"
+        }
+    }
+
+    /// "All languages" asks YouTube for ~190 subtitle tracks, which trips its HTTP
+    /// 429 rate limit; pair that mode with --ignore-errors so a throttled subtitle
+    /// can't abort the whole download. The focused modes stay strict so genuine
+    /// failures still surface.
+    var allowsSubtitleFailures: Bool { self == .allLanguages }
+
+    /// The yt-dlp `--sub-langs` value for this mode, or nil when subtitles are off.
+    /// Each base language carries a trailing `.*` because yt-dlp treats sub-lang
+    /// tokens as regexes, so "en" also captures en-US and en-orig.
+    func subtitleLanguageArgument(preferredLanguages: [String]) -> String? {
+        switch self {
+        case .off:
+            return nil
+        case .allLanguages:
+            return "all"
+        case .englishOnly:
+            return "en.*"
+        case .englishAndSystem:
+            var bases = ["en"]
+            if let preferred = preferredLanguages.first {
+                let primary = String(preferred.split(separator: "-").first ?? "").lowercased()
+                if !primary.isEmpty, !bases.contains(primary) {
+                    bases.append(primary)
+                }
+            }
+            return bases.map { "\($0).*" }.joined(separator: ",")
+        }
+    }
+}
+
 public enum VideoCookieSource: String, CaseIterable, Identifiable, Sendable {
     case automatic
     case disabled
@@ -90,7 +137,7 @@ public enum VideoCookieSource: String, CaseIterable, Identifiable, Sendable {
 fileprivate struct VideoDownloaderPreferences: Sendable {
     var quality: VideoQuality
     var nonMP4Handling: VideoNonMP4Handling
-    var downloadsSubtitles: Bool
+    var subtitleMode: VideoSubtitleMode
     var saveDirectoryPath: String
     var cookieSource: VideoCookieSource
 
@@ -105,7 +152,8 @@ fileprivate struct VideoDownloaderPreferences: Sendable {
                 ?? .maximum,
             nonMP4Handling: VideoNonMP4Handling(rawValue: defaults.string(forKey: DefaultsKey.videoDownloaderNonMP4Handling) ?? "")
                 ?? .downloadWithoutConversion,
-            downloadsSubtitles: defaults.bool(forKey: DefaultsKey.videoDownloaderDownloadsSubtitles),
+            subtitleMode: VideoSubtitleMode(rawValue: defaults.string(forKey: DefaultsKey.videoDownloaderSubtitleMode) ?? "")
+                ?? .englishAndSystem,
             saveDirectoryPath: defaults.string(forKey: DefaultsKey.videoDownloaderSaveDirectory) ?? downloadsURL.path,
             cookieSource: VideoCookieSource(rawValue: defaults.string(forKey: DefaultsKey.videoDownloaderCookieSource) ?? "")
                 ?? .automatic
@@ -502,12 +550,16 @@ final class VideoDownloaderModel: ObservableObject {
         return host.replacingOccurrences(of: "www.", with: "")
     }
 
-    private static func normalizedURLString(_ urlString: String) -> String {
+    nonisolated static func normalizedURLString(_ urlString: String) -> String {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed) else {
-            return trimmed.lowercased()
+            return trimmed
         }
 
+        // Only the scheme and host are case-insensitive. The path and query carry
+        // case-sensitive identifiers — e.g. a YouTube video ID like "wLOWk_RR1dg"
+        // is a different video from "wlowk_rr1dg" — so they must keep their case or
+        // distinct links collide and the second one is silently dropped as a dupe.
         components.scheme = components.scheme?.lowercased()
         components.host = components.host?.lowercased()
         components.fragment = nil
@@ -534,7 +586,7 @@ final class VideoDownloaderModel: ObservableObject {
             normalized.removeLast()
         }
 
-        return normalized.lowercased()
+        return normalized
     }
 }
 
@@ -616,8 +668,15 @@ enum VideoDownloaderRunner {
                 outputTemplate
             ]
 
-            if preferences.downloadsSubtitles {
-                baseArguments += ["--write-subs", "--write-auto-subs", "--sub-langs", "all"]
+            if let subtitleLangs = preferences.subtitleMode.subtitleLanguageArgument(preferredLanguages: Locale.preferredLanguages) {
+                // Requesting many languages ("all") trips YouTube's HTTP 429 rate limit,
+                // and yt-dlp treats a subtitle failure as fatal — which aborts the whole
+                // download. Focused language sets avoid 429; the "all" mode tolerates a
+                // subtitle failure instead (see allowsSubtitleFailures).
+                baseArguments += ["--write-subs", "--write-auto-subs", "--sub-langs", subtitleLangs]
+                if preferences.subtitleMode.allowsSubtitleFailures {
+                    baseArguments += ["--ignore-errors"]
+                }
             }
 
             switch preferences.nonMP4Handling {
@@ -627,6 +686,15 @@ enum VideoDownloaderRunner {
                 break
             case .convertToMP4:
                 baseArguments += ["--recode-video", "mp4"]
+            }
+
+            // Sources like X, Instagram, and YouTube Shorts deliver separate video
+            // and audio streams that yt-dlp must merge with ffmpeg. A Finder-launched
+            // .app has a minimal PATH that omits /opt/homebrew/bin, so point yt-dlp at
+            // ffmpeg explicitly; without this the merge step fails and the whole
+            // download is reported as failed.
+            if let ffmpegDirectory = findFFmpegDirectory() {
+                baseArguments += ["--ffmpeg-location", ffmpegDirectory]
             }
 
             func runAttempt(cookieBrowser: String?) async -> Attempt {
@@ -639,6 +707,17 @@ enum VideoDownloaderRunner {
                 let process = Process()
                 process.executableURL = command.executableURL
                 process.arguments = arguments
+
+                // Put the resolved yt-dlp's own directory first so the bundled deno
+                // (the JS runtime that solves YouTube's n-challenge) and ffmpeg are
+                // found, then Homebrew/usr-local — a Finder-launched .app otherwise
+                // inherits a minimal PATH that omits all of these.
+                var environment = ProcessInfo.processInfo.environment
+                let bundledBinDir = command.executableURL.deletingLastPathComponent().path
+                let toolPaths = [bundledBinDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+                let existingPath = environment["PATH"].map { [$0] } ?? []
+                environment["PATH"] = (toolPaths + existingPath).joined(separator: ":")
+                process.environment = environment
 
                 let pipe = Pipe()
                 process.standardOutput = pipe
@@ -719,9 +798,19 @@ enum VideoDownloaderRunner {
             // A pinned browser: always send its cookies.
             if let pinnedBrowser = preferences.cookieSource.ytDlpBrowser {
                 let attempt = await runAttempt(cookieBrowser: pinnedBrowser)
-                return attempt.status == 0
-                    ? successResult(from: attempt)
-                    : failureResult(from: attempt, loginGated: isAuthError(attempt.output))
+                if attempt.status == 0 {
+                    return successResult(from: attempt)
+                }
+                // Pinned cookies push YouTube down the JS-challenge path, which fails
+                // without a bundled JS runtime. Retry once without cookies (skips the
+                // challenge) so public videos still download despite the pin.
+                if !Task.isCancelled, isJSChallengeError(attempt.output) {
+                    let plain = await runAttempt(cookieBrowser: nil)
+                    if plain.status == 0 {
+                        return successResult(from: plain)
+                    }
+                }
+                return failureResult(from: attempt, loginGated: isAuthError(attempt.output))
             }
 
             // Automatic: try without cookies first so public videos never touch the
@@ -806,6 +895,29 @@ enum VideoDownloaderRunner {
         Bundle.main.resourceURL?
             .appendingPathComponent("bin")
             .appendingPathComponent("yt-dlp")
+    }
+
+    /// Returns the directory containing `ffmpeg`, suitable for `--ffmpeg-location`.
+    /// Prefers a bundled binary (for a self-contained app), then falls back to the
+    /// common Homebrew/system install locations.
+    private static func findFFmpegDirectory() -> String? {
+        if let bundledBin = Bundle.main.resourceURL?.appendingPathComponent("bin"),
+           FileManager.default.isExecutableFile(atPath: bundledBin.appendingPathComponent("ffmpeg").path) {
+            return bundledBin.path
+        }
+
+        let directories = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin"
+        ]
+
+        for directory in directories
+        where FileManager.default.isExecutableFile(atPath: directory + "/ffmpeg") {
+            return directory
+        }
+
+        return nil
     }
 
     private static func parseProgress(from data: Data) -> Progress? {
@@ -976,6 +1088,22 @@ enum VideoDownloaderRunner {
             "age restricted",
             "confirm your age",
             "you must be 18"
+        ]
+        return needles.contains { lowered.contains($0) }
+    }
+
+    /// True when the failure is YouTube refusing a request it can't JS-challenge-solve
+    /// (the "n challenge" / nsig path). With cookies, YouTube routes through this path
+    /// and, without a bundled JS runtime, only exposes image/storyboard formats —
+    /// surfacing as "Requested format is not available". A no-cookie retry uses a
+    /// client that skips the challenge, so it recovers public videos.
+    private static func isJSChallengeError(_ output: String) -> Bool {
+        let lowered = output.lowercased()
+        let needles = [
+            "n challenge solving failed",
+            "nsig extraction failed",
+            "only images are available",
+            "requested format is not available"
         ]
         return needles.contains { lowered.contains($0) }
     }
@@ -1295,11 +1423,23 @@ private struct DownloadQueueRow: View {
                             .lineLimit(1)
                             .frame(width: layout.queueProgressLabelWidth, alignment: .trailing)
                     }
+
+                    // Show the failure reason inline (selectable for copy). It's set on
+                    // both .failed and .retrying so the user can see why mid-retry.
+                    if (item.state == .failed || item.state == .retrying), !item.detail.isEmpty {
+                        Text(item.detail)
+                            .font(.system(size: layout.queueMetaFontSize, weight: .medium))
+                            .foregroundStyle(isFailed ? Color.red.opacity(0.9) : .secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(6)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .padding(.horizontal, layout.queueRowHorizontalPadding)
             .padding(.vertical, layout.queueRowVerticalPadding)
-            .frame(height: layout.queueRowHeight)
+            .frame(minHeight: layout.queueRowHeight, alignment: .top)
             .background(Color.white.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: layout.queueRowCornerRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: layout.queueRowCornerRadius, style: .continuous))
@@ -1404,7 +1544,7 @@ private struct VideoDownloaderLayout {
     var statusFontSize: CGFloat { 14 * scale }
     var statusTextHeight: CGFloat { 22 * scale }
     var queueTopPadding: CGFloat { 6 * scale }
-    var queueHeight: CGFloat { 92 * scale }
+    var queueHeight: CGFloat { 292 * scale }
     var queueRowHeight: CGFloat { 42 * scale }
     var queueRowSpacing: CGFloat { 6 * scale }
     var queueRowHorizontalSpacing: CGFloat { 8 * scale }
@@ -1426,7 +1566,7 @@ private struct VideoDownloaderSettingsView: View {
 
     @AppStorage(DefaultsKey.videoDownloaderPreferredQuality, store: AppDefaults.shared) private var preferredQualityRaw = VideoQuality.maximum.rawValue
     @AppStorage(DefaultsKey.videoDownloaderNonMP4Handling, store: AppDefaults.shared) private var nonMP4HandlingRaw = VideoNonMP4Handling.downloadWithoutConversion.rawValue
-    @AppStorage(DefaultsKey.videoDownloaderDownloadsSubtitles, store: AppDefaults.shared) private var downloadsSubtitles = true
+    @AppStorage(DefaultsKey.videoDownloaderSubtitleMode, store: AppDefaults.shared) private var subtitleModeRaw = VideoSubtitleMode.englishAndSystem.rawValue
     @AppStorage(DefaultsKey.videoDownloaderCookieSource, store: AppDefaults.shared) private var cookieSourceRaw = VideoCookieSource.automatic.rawValue
     @AppStorage(DefaultsKey.videoDownloaderSaveDirectory, store: AppDefaults.shared) private var saveDirectoryPath = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
@@ -1449,17 +1589,12 @@ private struct VideoDownloaderSettingsView: View {
                 layout: layout
             )
 
-            VStack(alignment: .leading, spacing: layout.captionSpacing) {
-                Toggle("Download subtitles", isOn: $downloadsSubtitles)
-                    .toggleStyle(.checkbox)
-                    .controlSize(layout.controlSize)
-                    .font(.system(size: layout.bodyFontSize, weight: .semibold))
-
-                Text("All available subtitles will be downloaded together with the video")
-                    .font(.system(size: layout.captionFontSize, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            settingsPicker(
+                title: "Subtitles:",
+                selection: $subtitleModeRaw,
+                options: VideoSubtitleMode.allCases.map { ($0.rawValue, $0.title) },
+                layout: layout
+            )
 
             VStack(alignment: .leading, spacing: layout.controlSpacing) {
                 Text("Save to:")

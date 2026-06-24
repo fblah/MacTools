@@ -4,6 +4,33 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.10.0] — 2026-06-24
+
+### Fixed
+- **Video Downloader** now reliably downloads YouTube Shorts, X (Twitter), and
+  Instagram videos. Several root causes were addressed:
+  - Bundled **ffmpeg/ffprobe** so videos delivered as separate audio/video
+    streams (Shorts, X, Instagram, most modern YouTube) merge correctly. The tool
+    no longer relies on a system/Homebrew ffmpeg, which a Finder-launched app
+    cannot find on its minimal `PATH`.
+  - Bundled the **Deno** runtime so yt-dlp can solve YouTube's JavaScript
+    "n‑challenge" — required whenever browser cookies are used, and increasingly
+    required in general. Without it, downloads failed with "Requested format is
+    not available".
+  - Subtitles now default to **English + your system language** rather than every
+    available language, which had started tripping YouTube's rate limiting
+    (HTTP 429) and aborting the whole download.
+  - A pinned-browser cookie attempt that hits the JS challenge now retries once
+    without cookies, so public videos still download.
+  - Duplicate detection no longer lower-cases the URL, so links that differ only
+    by a case-sensitive video id are no longer wrongly treated as duplicates.
+
+### Added
+- **Video Downloader** subtitle setting: choose Off, English only,
+  English + system language, or All languages.
+- Failed downloads now show the error message inline (selectable to copy), in a
+  taller window.
+
 ## [0.9.1] — 2026-06-19
 
 ### Fixed

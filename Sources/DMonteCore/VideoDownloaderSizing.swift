@@ -1,7 +1,7 @@
 import AppKit
 
 public enum VideoDownloaderSizing {
-    public static let baseSize = NSSize(width: 410, height: 550)
+    public static let baseSize = NSSize(width: 410, height: 750)
 
     public static func preferredSize() -> NSSize {
         let scale = currentScale

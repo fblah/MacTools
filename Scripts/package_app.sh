@@ -48,6 +48,16 @@ swift build -c release
 
 YTDLP_PATH="$("$ROOT_DIR/Scripts/fetch_yt_dlp.sh")"
 
+# Static ffmpeg + ffprobe for the Video Downloader's merge/recode step (needed for
+# X, Instagram, YouTube Shorts, and any non-progressive source). Fatal on failure:
+# a release that can't merge is broken. Override/skip via the env vars documented
+# in fetch_ffmpeg.sh.
+FFMPEG_DIR="$("$ROOT_DIR/Scripts/fetch_ffmpeg.sh")"
+
+# Deno runtime so yt-dlp can solve YouTube's JavaScript n-challenge (required for
+# cookie'd requests and increasingly in general). Fatal on failure like yt-dlp.
+DENO_DIR="$("$ROOT_DIR/Scripts/fetch_deno.sh")"
+
 # Pool of virtual cables for the Audio Router tool. Non-fatal: if the build
 # fails (offline / no Xcode), the tool still ships and works for mirror/combine —
 # it just can't offer one-click cable install until a pool is present.
@@ -72,12 +82,20 @@ for entry in "${HELPERS[@]}"; do
   stamp_version "$helper_plist"
 done
 
-# Video Downloader ships a bundled yt-dlp binary in its Resources/bin.
-VIDEO_DOWNLOADER_BIN_DIR="$HELPERS_DIR/DMonte Video Downloader.app/Contents/Resources/bin"
+# Video Downloader ships bundled yt-dlp + ffmpeg/ffprobe in its Resources/bin, so
+# downloads (including merges and recodes) work without any system install.
+VIDEO_DOWNLOADER_RESOURCES_DIR="$HELPERS_DIR/DMonte Video Downloader.app/Contents/Resources"
+VIDEO_DOWNLOADER_BIN_DIR="$VIDEO_DOWNLOADER_RESOURCES_DIR/bin"
 mkdir -p "$VIDEO_DOWNLOADER_BIN_DIR"
 cp "$YTDLP_PATH" "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp"
-chmod 755 "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp"
-xattr -cr "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" 2>/dev/null || true
+cp "$FFMPEG_DIR/ffmpeg" "$VIDEO_DOWNLOADER_BIN_DIR/ffmpeg"
+cp "$FFMPEG_DIR/ffprobe" "$VIDEO_DOWNLOADER_BIN_DIR/ffprobe"
+cp "$DENO_DIR/deno" "$VIDEO_DOWNLOADER_BIN_DIR/deno"
+chmod 755 "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" "$VIDEO_DOWNLOADER_BIN_DIR/ffmpeg" "$VIDEO_DOWNLOADER_BIN_DIR/ffprobe" "$VIDEO_DOWNLOADER_BIN_DIR/deno"
+xattr -cr "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" "$VIDEO_DOWNLOADER_BIN_DIR/ffmpeg" "$VIDEO_DOWNLOADER_BIN_DIR/ffprobe" "$VIDEO_DOWNLOADER_BIN_DIR/deno" 2>/dev/null || true
+# Ship the bundled tools' license/credits (FFmpeg is GPL, Deno is MIT).
+cp "$ROOT_DIR/Packaging/FFmpeg-CREDITS.txt" "$VIDEO_DOWNLOADER_RESOURCES_DIR/FFmpeg-CREDITS.txt"
+cp "$ROOT_DIR/Packaging/Deno-CREDITS.txt" "$VIDEO_DOWNLOADER_RESOURCES_DIR/Deno-CREDITS.txt"
 
 # Audio Router ships the pool of virtual-cable drivers in Resources/Cables, each
 # ready to be copied to /Library/Audio/Plug-Ins/HAL/ by the in-app installer.
@@ -166,6 +184,22 @@ sign_one() {
 # 1. Deepest first: the bundled yt-dlp child process (relaxed entitlements).
 if [[ -f "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" ]]; then
   sign_one "$VIDEO_DOWNLOADER_BIN_DIR/yt-dlp" "$YTDLP_ENTITLEMENTS"
+fi
+
+# 1a. The bundled ffmpeg/ffprobe. They're self-contained static Mach-O binaries
+# (system-linked only), so the Hardened Runtime needs no extra entitlements —
+# unlike yt-dlp's PyInstaller bundle. Re-signed with our identity so the whole app
+# notarizes as one unit.
+for ffmpeg_tool in ffmpeg ffprobe; do
+  if [[ -f "$VIDEO_DOWNLOADER_BIN_DIR/$ffmpeg_tool" ]]; then
+    sign_one "$VIDEO_DOWNLOADER_BIN_DIR/$ffmpeg_tool"
+  fi
+done
+
+# 1b. The bundled deno. Its V8 engine JIT-compiles, so under the Hardened Runtime
+# it needs the same JIT/unsigned-memory relaxations as yt-dlp's interpreter.
+if [[ -f "$VIDEO_DOWNLOADER_BIN_DIR/deno" ]]; then
+  sign_one "$VIDEO_DOWNLOADER_BIN_DIR/deno" "$YTDLP_ENTITLEMENTS"
 fi
 
 # 1b. The bundled virtual-cable drivers (re-signed with our Developer ID so the

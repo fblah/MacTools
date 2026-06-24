@@ -1,0 +1,24 @@
+FFmpeg
+======
+
+DMonte Video Downloader bundles prebuilt static FFmpeg binaries (ffmpeg and
+ffprobe) in Contents/Resources/bin. yt-dlp invokes them as a separate child
+process to merge separate video/audio streams and to recode to MP4.
+
+Version:   8.1.1
+Platform:  macOS arm64, statically linked (no external dependencies)
+Provider:  https://ffmpeg.martin-riedl.de/  (build macos/arm64/1778761665_8.1.1)
+License:   GNU General Public License, version 2 or later. This build is
+           configured with --enable-gpl --enable-libx264, which makes it GPL.
+
+FFmpeg is free software; you can redistribute it and/or modify it under the terms
+of the GNU GPL. The complete corresponding source code for this exact version is
+the upstream FFmpeg 8.1.1 release, available from:
+
+    https://ffmpeg.org/releases/        (FFmpeg 8.1.1 source tarball)
+    https://ffmpeg.martin-riedl.de/      (this build's configuration)
+
+MacTools itself is distributed under the GNU GPL v3 (see the repository LICENSE
+file), so redistributing these GPL FFmpeg binaries alongside it is fully
+license-compatible. FFmpeg is a trademark of Fabrice Bellard, originator of the
+FFmpeg project. FFmpeg is not affiliated with DMonte Tool Box.
