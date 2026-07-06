@@ -11,14 +11,27 @@ final class ShortcutRecorder: ObservableObject {
 
     private var monitor: Any?
     private var resignObserver: NSObjectProtocol?
+    private var onResumeHotKeys: (() -> Void)?
 
     /// Starts recording for `action`. `onCapture` receives the captured shortcut, or nil when
     /// the user cancels with Esc. Recording also auto-cancels when the popover panel resigns
     /// key (it is ordered out without tearing down the SwiftUI hierarchy, so `onDisappear`
     /// alone can't be relied on to clean the monitor up).
-    func begin(for action: WindowAction, onCapture: @escaping (WindowShortcut?) -> Void) {
-        cancel()
+    ///
+    /// `suspendHotKeys`/`resumeHotKeys` bracket the capture: the global snap hotkeys are released
+    /// while recording so Carbon doesn't swallow a combination the recorder is trying to read
+    /// (otherwise pressing e.g. ⌃⌥→ just fires Right Half and the monitor never sees it), and are
+    /// re-registered on every exit path (capture, Esc, or the panel losing key).
+    func begin(
+        for action: WindowAction,
+        suspendHotKeys: @escaping () -> Void = {},
+        resumeHotKeys: @escaping () -> Void = {},
+        onCapture: @escaping (WindowShortcut?) -> Void
+    ) {
+        cancel() // ends any prior recording (running its own resume) before we suspend again
+        onResumeHotKeys = resumeHotKeys
         recordingAction = action
+        suspendHotKeys()
         NSApp.keyWindow?.makeFirstResponder(nil)
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
@@ -70,6 +83,11 @@ final class ShortcutRecorder: ObservableObject {
             self.resignObserver = nil
         }
         recordingAction = nil
+        // Re-register the global hotkeys we released for capture — after the local monitor is gone,
+        // and on every exit path. Cleared first so a re-entrant begin() can't double-resume.
+        let resume = onResumeHotKeys
+        onResumeHotKeys = nil
+        resume?()
     }
 
     /// AppKit modifier flags → Carbon modifier mask (the format `RegisterEventHotKey` wants).
@@ -122,6 +140,7 @@ public struct WindowManagerPopoverView: View {
                     targetAffordance
                     section("Halves", halves, columns: 4)
                     section("Corners", corners, columns: 4)
+                    cornerChordHint
                     section("Thirds", thirds, columns: 5)
                     section("Size", sizing, columns: 3)
                     resultFeedback
@@ -193,6 +212,19 @@ public struct WindowManagerPopoverView: View {
             }
             .foregroundStyle(.secondary)
         }
+    }
+
+    /// Explains the corner chord: two perpendicular half-snap shortcuts pressed in quick
+    /// succession snap to the corner between them (⌃⌥→ then ⌃⌥↑ = top-right).
+    private var cornerChordHint: some View {
+        HStack(alignment: .top, spacing: s(5)) {
+            Image(systemName: "sparkles")
+                .font(.system(size: s(8), weight: .semibold))
+            Text("Tip: tap two half-snap shortcuts in a row — e.g. Right then Up — to snap to that corner.")
+                .font(.system(size: s(9)))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.tertiary)
     }
 
     private func section(_ title: String, _ actions: [WindowAction], columns: Int) -> some View {
@@ -387,7 +419,11 @@ public struct WindowManagerPopoverView: View {
             recorder.cancel()
             return
         }
-        recorder.begin(for: action) { shortcut in
+        recorder.begin(
+            for: action,
+            suspendHotKeys: { controller.suspendHotKeysForRecording() },
+            resumeHotKeys: { controller.resumeHotKeysAfterRecording() }
+        ) { shortcut in
             guard let shortcut else { return } // Esc — cancelled
             switch controller.assignShortcut(shortcut, to: action) {
             case .assigned:

@@ -337,4 +337,66 @@ public enum WindowManagerKit {
         }
         return best?.index
     }
+
+    // MARK: - Corner chords (pure)
+
+    /// The four half-snaps that can chain into a corner.
+    public static let halfSnaps: Set<WindowAction> = [.leftHalf, .rightHalf, .topHalf, .bottomHalf]
+
+    /// How long after a half-snap hotkey a second, perpendicular half-snap still reads as a corner
+    /// chord (⌃⌥→ then ⌃⌥↑ = top-right) rather than two independent half-snaps.
+    public static let cornerChordWindow: TimeInterval = 0.35
+
+    /// The corner two half-snaps combine into, if they are on perpendicular axes. Order-independent
+    /// (right+top and top+right both give top-right); same-axis or non-half pairs return nil. Pure.
+    public static func cornerCombining(_ first: WindowAction, _ second: WindowAction) -> WindowAction? {
+        let horizontals: Set<WindowAction> = [.leftHalf, .rightHalf]
+        let verticals: Set<WindowAction> = [.topHalf, .bottomHalf]
+        let pair = [first, second]
+        guard let horizontal = pair.first(where: horizontals.contains),
+              let vertical = pair.first(where: verticals.contains) else {
+            return nil // both on the same axis (or not halves): no corner
+        }
+        switch (horizontal, vertical) {
+        case (.leftHalf, .topHalf):     return .topLeft
+        case (.rightHalf, .topHalf):    return .topRight
+        case (.leftHalf, .bottomHalf):  return .bottomLeft
+        case (.rightHalf, .bottomHalf): return .bottomRight
+        default:                        return nil
+        }
+    }
+
+    /// The half-snap fired just before the current one, for chord detection.
+    public struct ChordState: Equatable, Sendable {
+        public let action: WindowAction
+        public let at: Date
+        public init(action: WindowAction, at: Date) {
+            self.action = action
+            self.at = at
+        }
+    }
+
+    /// What a hotkey-fired half-snap should do given the previous one.
+    public enum ChordOutcome: Equatable, Sendable {
+        /// Apply this corner and clear the chord state.
+        case corner(WindowAction)
+        /// Apply this half and remember it (with `now`) as the new chord state.
+        case half(WindowAction)
+    }
+
+    /// Promote to a corner when the previous half is recent and perpendicular, else apply the half
+    /// itself. Pure, so the timing is unit-tested without real hotkeys.
+    public static func resolveChord(
+        previous: ChordState?,
+        current: WindowAction,
+        now: Date,
+        window: TimeInterval = cornerChordWindow
+    ) -> ChordOutcome {
+        if let previous,
+           now.timeIntervalSince(previous.at) <= window,
+           let corner = cornerCombining(previous.action, current) {
+            return .corner(corner)
+        }
+        return .half(current)
+    }
 }
