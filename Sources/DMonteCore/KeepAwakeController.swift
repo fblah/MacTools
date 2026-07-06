@@ -52,10 +52,11 @@ public final class KeepAwakeController: ObservableObject {
     /// - Parameter duration: number of seconds to stay awake, or `nil` for indefinitely. A
     ///   non-positive duration is treated as indefinite.
     public func activate(duration: TimeInterval?) {
-        createAssertionIfNeeded()
-        isActive = true
+        // Only report active if the assertion was actually taken; otherwise the UI would claim the
+        // Mac is being kept awake while nothing is held.
+        isActive = createAssertionIfNeeded()
 
-        if let duration, duration > 0 {
+        if isActive, let duration, duration > 0 {
             startCountdown(duration: duration)
         } else {
             stopCountdown()
@@ -86,9 +87,10 @@ public final class KeepAwakeController: ObservableObject {
         AppDefaults.shared.set(newValue, forKey: DefaultsKey.keepAwakeKeepDisplayOn)
 
         guard hasAssertion else { return }
-        // Recreate with the new assertion type so the change takes effect immediately.
+        // Recreate with the new assertion type so the change takes effect immediately. Keep
+        // `isActive` honest in case the recreate fails.
         releaseAssertion()
-        createAssertionIfNeeded()
+        isActive = createAssertionIfNeeded()
     }
 
     // MARK: - Assertion management
@@ -99,8 +101,11 @@ public final class KeepAwakeController: ObservableObject {
             : kIOPMAssertionTypePreventUserIdleSystemSleep
     }
 
-    private func createAssertionIfNeeded() {
-        guard !hasAssertion else { return }
+    /// Creates the power assertion if one isn't already held. Returns `true` when an assertion is
+    /// held afterwards (either freshly created or already present), `false` if creation failed.
+    @discardableResult
+    private func createAssertionIfNeeded() -> Bool {
+        guard !hasAssertion else { return true }
 
         var newID = IOPMAssertionID(0)
         let result = IOPMAssertionCreateWithName(
@@ -114,6 +119,8 @@ public final class KeepAwakeController: ObservableObject {
             assertionID = newID
             hasAssertion = true
         }
+
+        return hasAssertion
     }
 
     private func releaseAssertion() {

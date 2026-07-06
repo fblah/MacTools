@@ -57,6 +57,18 @@ final class VideoDownloaderTests: XCTestCase {
         XCTAssertNotEqual(upper, lower)
     }
 
+    @MainActor
+    func testVisibleDownloadsAreNewestFirst() {
+        let model = VideoDownloaderModel()
+        let oldest = makeDownloadItem(url: "https://example.com/oldest", state: .complete)
+        let middle = makeDownloadItem(url: "https://example.com/middle", state: .failed)
+        let newest = makeDownloadItem(url: "https://example.com/newest", state: .queued)
+
+        model.downloads = [oldest, middle, newest]
+
+        XCTAssertEqual(model.visibleDownloads.map(\.id), [newest.id, middle.id, oldest.id])
+    }
+
     func testNormalizedURLPreservesCaseSensitiveQueryValue() {
         let key = VideoDownloaderModel.normalizedURLString("https://www.youtube.com/watch?v=wLOWk_RR1dg")
         XCTAssertEqual(key, "https://www.youtube.com/watch?v=wLOWk_RR1dg")
@@ -116,5 +128,25 @@ final class VideoDownloaderTests: XCTestCase {
         XCTAssertFalse(VideoSubtitleMode.englishAndSystem.allowsSubtitleFailures)
         XCTAssertFalse(VideoSubtitleMode.englishOnly.allowsSubtitleFailures)
         XCTAssertFalse(VideoSubtitleMode.off.allowsSubtitleFailures)
+    }
+
+    private func makeDownloadItem(
+        url: String,
+        state: VideoDownloaderModel.DownloadState
+    ) -> VideoDownloaderModel.DownloadItem {
+        VideoDownloaderModel.DownloadItem(
+            id: UUID(),
+            url: url,
+            title: "example.com",
+            status: "Queued",
+            detail: "",
+            progressFraction: nil,
+            progressDetail: "Waiting",
+            copyText: url,
+            state: state,
+            retryCount: 0,
+            outputDirectory: nil,
+            outputFilePath: nil
+        )
     }
 }

@@ -4,6 +4,27 @@ All notable changes to D'Monte's Tool Box are documented here. This project
 adheres to [Semantic Versioning](https://semver.org) and the
 [Keep a Changelog](https://keepachangelog.com) format.
 
+## [0.11.0] — 2026-07-06
+
+### Added
+- **Window Manager** corner chords: tap two perpendicular half-snap shortcuts in
+  quick succession — e.g. Right Half then Top Half — to snap the window to that
+  corner (⌃⌥→ then ⌃⌥↑ = top-right) instead of firing two halves. The popover
+  shows a tip explaining it.
+
+### Fixed
+- **Window Manager** shortcut recording now releases the global snap hotkeys
+  while capturing, so you can assign a combination the tool already claims (e.g.
+  ⌃⌥→) — previously Carbon intercepted it and the recorder never saw the keys.
+- **Window Manager** no longer snaps the wrong window on multi-monitor setups.
+  When opening the popover re-activates the app you were already in (it owns the
+  top window on the popover's display too), the target resolver now keeps that
+  window instead of jumping past it to an older, unrelated app, and peels the
+  entire trailing run of the opening click's own display-switch activations.
+- **Keep Awake** only reports itself active when the power assertion was actually
+  taken, and won't start a countdown if the assertion failed to create.
+- **Video Downloader** shows the recent-downloads list newest first.
+
 ## [0.10.0] — 2026-06-24
 
 ### Fixed

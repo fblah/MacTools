@@ -13,6 +13,65 @@ final class WindowManagerKitTests: XCTestCase {
         WindowManagerKit.frame(for: action, in: area)
     }
 
+    // MARK: - Corner chords
+
+    func testCornerCombiningPerpendicularPairsAreOrderIndependent() {
+        XCTAssertEqual(WindowManagerKit.cornerCombining(.rightHalf, .topHalf), .topRight)
+        XCTAssertEqual(WindowManagerKit.cornerCombining(.topHalf, .rightHalf), .topRight)
+        XCTAssertEqual(WindowManagerKit.cornerCombining(.leftHalf, .topHalf), .topLeft)
+        XCTAssertEqual(WindowManagerKit.cornerCombining(.bottomHalf, .leftHalf), .bottomLeft)
+        XCTAssertEqual(WindowManagerKit.cornerCombining(.rightHalf, .bottomHalf), .bottomRight)
+    }
+
+    func testCornerCombiningRejectsSameAxisAndNonHalves() {
+        XCTAssertNil(WindowManagerKit.cornerCombining(.leftHalf, .rightHalf))
+        XCTAssertNil(WindowManagerKit.cornerCombining(.topHalf, .bottomHalf))
+        XCTAssertNil(WindowManagerKit.cornerCombining(.leftHalf, .leftHalf))
+        XCTAssertNil(WindowManagerKit.cornerCombining(.maximize, .topHalf))
+        XCTAssertNil(WindowManagerKit.cornerCombining(.leftThird, .topHalf))
+    }
+
+    func testResolveChordPromotesPerpendicularWithinWindow() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        let previous = WindowManagerKit.ChordState(action: .rightHalf, at: t0)
+        XCTAssertEqual(
+            WindowManagerKit.resolveChord(previous: previous, current: .topHalf, now: t0.addingTimeInterval(0.2)),
+            .corner(.topRight)
+        )
+    }
+
+    func testResolveChordJustInsideWindowPromotes() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        let previous = WindowManagerKit.ChordState(action: .rightHalf, at: t0)
+        XCTAssertEqual(
+            WindowManagerKit.resolveChord(previous: previous, current: .bottomHalf, now: t0.addingTimeInterval(WindowManagerKit.cornerChordWindow - 0.02)),
+            .corner(.bottomRight)
+        )
+    }
+
+    func testResolveChordIgnoresStalePrevious() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        let previous = WindowManagerKit.ChordState(action: .rightHalf, at: t0)
+        XCTAssertEqual(
+            WindowManagerKit.resolveChord(previous: previous, current: .topHalf, now: t0.addingTimeInterval(0.5)),
+            .half(.topHalf)
+        )
+    }
+
+    func testResolveChordSameAxisStaysHalf() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        let previous = WindowManagerKit.ChordState(action: .leftHalf, at: t0)
+        XCTAssertEqual(
+            WindowManagerKit.resolveChord(previous: previous, current: .rightHalf, now: t0.addingTimeInterval(0.1)),
+            .half(.rightHalf)
+        )
+    }
+
+    func testResolveChordWithoutPreviousIsHalf() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        XCTAssertEqual(WindowManagerKit.resolveChord(previous: nil, current: .leftHalf, now: t0), .half(.leftHalf))
+    }
+
     func testLeftHalf() {
         XCTAssertEqual(frame(.leftHalf), CGRect(x: 100, y: 50, width: 600, height: 800))
     }

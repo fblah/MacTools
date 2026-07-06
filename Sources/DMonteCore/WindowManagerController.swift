@@ -54,6 +54,11 @@ public final class WindowManagerController: NSObject, ObservableObject {
     @Published public private(set) var secureInputBlocked = false
 
     private var hotKeys: [GlobalHotKey] = []
+
+    /// The half-snap most recently fired by a hotkey, for corner-chord detection (⌃⌥→ then ⌃⌥↑ =
+    /// top-right). Popover tile clicks never touch this — a click is always a single action.
+    private var chordState: WindowManagerKit.ChordState?
+
     private var permissionTimer: Timer?
     private var windowSelectionMonitor: Any?
     private let shortcutStore: WindowShortcutStore
@@ -289,7 +294,7 @@ public final class WindowManagerController: NSObject, ObservableObject {
                 do {
                     let key = try GlobalHotKey.register(keyCode: keyCode, modifiers: shortcut.modifiers, id: id) { [weak self] in
                         Task { @MainActor in
-                            self?.apply(action)
+                            self?.applyHotKey(action)
                         }
                     }
                     hotKeys.append(key)
@@ -323,6 +328,21 @@ public final class WindowManagerController: NSObject, ObservableObject {
     public func unregisterHotKeys() {
         hotKeys.removeAll()
         registrationFailures = [:]
+    }
+
+    /// Releases the global hotkeys so the shortcut recorder's local key monitor can capture any
+    /// combination — including ones this tool (or another app) currently claims, which Carbon would
+    /// otherwise intercept before the recorder ever sees them. Balance with
+    /// `resumeHotKeysAfterRecording()`; registration failures are left intact for the UI and are
+    /// rebuilt on resume.
+    public func suspendHotKeysForRecording() {
+        hotKeys.removeAll()
+    }
+
+    /// Re-registers the global hotkeys after recording ends (capture, cancel, or the panel losing
+    /// focus). Reflects any shortcut just assigned.
+    public func resumeHotKeysAfterRecording() {
+        if hasAccessibility { registerHotKeys() }
     }
 
     private static func statusCode(for error: GlobalHotKeyRegistrationError) -> Int32 {
@@ -366,6 +386,27 @@ public final class WindowManagerController: NSObject, ObservableObject {
     }
 
     // MARK: - Apply
+
+    /// Hotkey entry point. Half-snaps participate in corner chords — a second perpendicular half
+    /// fired within `WindowManagerKit.cornerChordWindow` snaps to the corner between them (⌃⌥→ then
+    /// ⌃⌥↑ = top-right) instead of doing two halves. Every other action applies directly. The
+    /// popover tiles call `apply(_:)` straight, so a tile click is always a single action.
+    func applyHotKey(_ action: WindowAction) {
+        guard WindowManagerKit.halfSnaps.contains(action) else {
+            chordState = nil
+            apply(action)
+            return
+        }
+        let now = Date()
+        switch WindowManagerKit.resolveChord(previous: chordState, current: action, now: now) {
+        case .corner(let corner):
+            chordState = nil
+            apply(corner)
+        case .half(let half):
+            chordState = WindowManagerKit.ChordState(action: half, at: now)
+            apply(half)
+        }
+    }
 
     /// Applies `action` to the target app's focused window. Returns the outcome and also
     /// publishes it to `lastResult`.

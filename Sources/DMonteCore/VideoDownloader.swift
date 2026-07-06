@@ -239,7 +239,8 @@ final class VideoDownloaderModel: ObservableObject {
             $0.state == .downloading || $0.state == .queued || $0.state == .retrying
         }
         let completed = downloads.filter { $0.state == .complete || $0.state == .failed }.suffix(3)
-        return Array((activeOrQueued + completed).suffix(5))
+        let visibleIDs = Set((activeOrQueued + completed).suffix(5).map(\.id))
+        return downloads.filter { visibleIDs.contains($0.id) }.reversed()
     }
 
     var latestCopyMessage: String {

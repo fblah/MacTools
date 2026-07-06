@@ -59,9 +59,10 @@ public final class ActivationTracker: NSObject {
         case noLiveHistory
         /// The most recent live activation is trustworthy.
         case mostRecent(Entry)
-        /// The most recent activation was young enough to have been caused by the opening click
-        /// itself; the entry before it (different pid) is the real target. The skipped entry has
-        /// been dropped from the history so a reopened popover resolves consistently.
+        /// The trailing activation(s) were young enough to have been caused by the opening click
+        /// itself; the entry before that run is the real target. The suspicious run has been
+        /// dropped from the history so a reopened popover resolves consistently. `skipped` carries
+        /// the newest dropped entry (for logging).
         case skippedSuspicious(target: Entry, skipped: Entry)
     }
 
@@ -183,8 +184,9 @@ public final class ActivationTracker: NSObject {
         return Self.liveApp(entry.pid)
     }
 
-    /// The pure resolution core. Prunes dead entries, then applies the suspicious-window skip.
-    /// Mutates `history` (prune + drop of the skipped entry) exactly as `resolveTarget()` does.
+    /// The pure resolution core. Prunes dead entries, then peels the opening click's own
+    /// display-switch activation(s) to recover the app/window the user was actually in.
+    /// Mutates `history` (prune + drop of the skipped run) exactly as `resolveTarget()` does.
     nonisolated static func resolve(
         history: inout [Entry],
         now: Date,
@@ -194,14 +196,43 @@ public final class ActivationTracker: NSObject {
         history.removeAll { !isLive($0.pid) }
 
         guard let last = history.last else { return .noLiveHistory }
-        let age = now.timeIntervalSince(last.at)
-        if age < suspiciousWindow,
-           !last.isUserSelection,
-           let previous = history.dropLast().last(where: { $0.pid != last.pid }) {
-            history.removeLast()
-            return .skippedSuspicious(target: previous, skipped: last)
+
+        // A user selection is authoritative: `recordCurrentWindowSelection` only fires while no
+        // session is active, so the newest one is a window the user physically clicked into
+        // (captured with its exact snapshot), never display-switch noise. Never skip it.
+        if last.isUserSelection { return .mostRecent(last) }
+
+        // Old enough to predate the opening click → trustworthy as-is.
+        guard now.timeIntervalSince(last.at) < suspiciousWindow else { return .mostRecent(last) }
+
+        // `last` is a recent app activation that may be the opening click's own display-switch
+        // shift: with "Displays have separate Spaces", clicking our menu-bar item re-activates the
+        // top app on that display. The real target is what the user was in *before* the click.
+        //
+        // Peel the entire trailing run of suspicious activations, and do NOT stop at the first
+        // *different* pid the way the old "nearest different pid" search did. The shift can emit
+        // several activations, and — this is the multi-monitor "snapped the wrong window" bug — it
+        // frequently re-activates the *same app* the user was already in, because that app also
+        // owns the top window on the popover's display. Skipping to a different pid then jumps
+        // straight past the user's real window to an unrelated older app; peeling purely by recency
+        // keeps the correct same-app entry, whose snapshot still points at the window on the other
+        // display.
+        var runStart = history.count - 1
+        while runStart - 1 >= 0 {
+            let predecessor = history[runStart - 1]
+            let predecessorIsSuspicious =
+                !predecessor.isUserSelection &&
+                now.timeIntervalSince(predecessor.at) < suspiciousWindow
+            if predecessorIsSuspicious { runStart -= 1 } else { break }
         }
-        return .mostRecent(last)
+
+        // The whole history is one suspicious run (e.g. right after launch): keep `last` — better
+        // to target it than nothing.
+        guard runStart >= 1 else { return .mostRecent(last) }
+
+        let target = history[runStart - 1]
+        history.removeSubrange(runStart...)
+        return .skippedSuspicious(target: target, skipped: last)
     }
 
     /// The running, non-terminated app for `pid`, or nil when it is gone.

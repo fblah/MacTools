@@ -76,16 +76,43 @@ final class ActivationTrackerTests: XCTestCase {
         XCTAssertEqual(history, [older, selected])
     }
 
-    func testSkipSearchesPastSamePidPredecessors() {
-        // The spurious shift can re-activate an app that already has history entries; the skip
-        // must find the nearest *different* pid, not just the literal previous entry.
+    func testSuspiciousShiftResolvesToTheSameAppTheUserWasInNotAnOlderApp() {
+        // The multi-monitor "snapped the wrong window" bug. The display-switch shift re-activates an
+        // app that is *already* the user's app (pid 2) — it owns the top window on the popover's
+        // display too. The skip must land on that same-app entry, whose snapshot still points at the
+        // window on the other display, NOT jump past it to the unrelated older app (pid 1).
         let other = entry(pid: 1, age: 30)
-        let earlierSame = entry(pid: 2, age: 10)
+        let earlierSame = entry(pid: 2, name: "Target", age: 10)
         let spurious = entry(pid: 2, age: 0.1)
         var history = [other, earlierSame, spurious]
         let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
-        XCTAssertEqual(result, .skippedSuspicious(target: other, skipped: spurious))
-        XCTAssertEqual(history, [other, earlierSame])
+        XCTAssertEqual(result, .skippedSuspicious(target: earlierSame, skipped: spurious))
+        XCTAssertEqual(history, [other, earlierSame], "only the suspicious reactivation is dropped")
+    }
+
+    func testUserSelectionSurvivesSameAppDisplaySwitchReactivation() {
+        // The reported bug end-to-end at the resolver: the user clicked into app 2's window on the
+        // left display (a user selection), then opened the popover from the primary display's menu
+        // bar, which re-activated app 2 (now its window on the primary display). The resolver must
+        // return the user's selection — with the left-window snapshot — not the reactivation.
+        let selection = entry(pid: 2, name: "LeftWindow", age: 8, isUserSelection: true)
+        let reactivation = entry(pid: 2, name: "PrimaryWindow", age: 0.05)
+        var history = [selection, reactivation]
+        let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
+        XCTAssertEqual(result, .skippedSuspicious(target: selection, skipped: reactivation))
+        XCTAssertEqual(history, [selection])
+    }
+
+    func testEntireTrailingShiftRunIsPeeled() {
+        // The display switch can emit more than one activation in quick succession; every one is
+        // noise and must be peeled to reach the user's real target.
+        let target = entry(pid: 1, name: "Real", age: 20)
+        let shiftA = entry(pid: 3, age: 0.12)
+        let shiftB = entry(pid: 2, age: 0.06)
+        var history = [target, shiftA, shiftB]
+        let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
+        XCTAssertEqual(result, .skippedSuspicious(target: target, skipped: shiftB))
+        XCTAssertEqual(history, [target], "both suspicious activations are dropped")
     }
 
     func testYoungActivationWithNoDifferentPredecessorIsKept() {
@@ -98,11 +125,18 @@ final class ActivationTrackerTests: XCTestCase {
         XCTAssertEqual(history, [only])
     }
 
-    func testYoungActivationWithOnlySamePidHistoryIsKept() {
-        var history = [entry(pid: 2, age: 20), entry(pid: 2, age: 0.05)]
+    func testYoungSamePidActivationResolvesToTheOlderPreShiftEntry() {
+        // Only same-pid history: the recent one is the display-switch reactivation (its snapshot is
+        // the window now focused on the popover's display); the older one holds the window the user
+        // was actually in. Prefer the older, pre-shift entry. If no display switch actually
+        // happened the frames match, so the AXWindowNumber lookup lands on the same window anyway —
+        // preferring the older snapshot is strictly safer.
+        let preShift = entry(pid: 2, name: "Before", age: 20)
+        let shift = entry(pid: 2, name: "AfterClick", age: 0.05)
+        var history = [preShift, shift]
         let result = ActivationTracker.resolve(history: &history, now: now, isLive: { _ in true })
-        XCTAssertEqual(result, .mostRecent(history[1]))
-        XCTAssertEqual(history.count, 2)
+        XCTAssertEqual(result, .skippedSuspicious(target: preShift, skipped: shift))
+        XCTAssertEqual(history, [preShift])
     }
 
     func testAgeJustOutsideTheWindowIsNotSuspicious() {
