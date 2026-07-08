@@ -23,9 +23,9 @@ public enum AudioRouterSizing {
         NSSize(width: panelWidth.rounded(), height: panelHeight.rounded())
     }
 
-    // Base canvas — a touch wider/taller than the switcher to fit the builder.
+    // Base canvas — taller than the switcher to fit the router builder.
     public static var panelWidth: CGFloat { s(360) }
-    public static var panelHeight: CGFloat { s(520) }
+    public static var panelHeight: CGFloat { s(670) }
 
     // Spacing scale
     public static var outerPadding: CGFloat { s(16) }
@@ -47,5 +47,4 @@ public enum AudioRouterSizing {
     // Controls
     public static var iconButtonSize: CGFloat { s(28) }
     public static var checkmarkSize: CGFloat { s(13) }
-    public static var scrollMaxHeight: CGFloat { s(300) }
 }
