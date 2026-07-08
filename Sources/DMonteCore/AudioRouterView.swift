@@ -360,8 +360,9 @@ public struct AudioRouterPopoverView: View {
                     routerDevicesSection
                     presetsSection
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxHeight: AudioRouterSizing.scrollMaxHeight)
+            .frame(maxHeight: .infinity)
             Divider()
             footer
         }
