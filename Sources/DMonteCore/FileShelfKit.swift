@@ -18,6 +18,12 @@ public enum ShelfAvailability: String, Codable, Sendable, Equatable {
     /// or the record was corrupted. Recoverable only by shelving the file again, but still worth
     /// showing so the user can see what they have lost.
     case unresolvable
+
+    /// Not checked against the file system yet. Resolving a shelf means one bookmark resolution
+    /// per row against whatever volume it lives on, so it runs off the main actor and the rows
+    /// exist before their answers do. A row in this state is shown as an ordinary row — it is not
+    /// known to be gone, and dimming it on the way in would flash every shelf grey at launch.
+    case resolving
 }
 
 /// The persisted form of one shelved file.
@@ -101,6 +107,18 @@ public struct ShelfItem: Sendable, Identifiable, Equatable {
 
     public var isAvailable: Bool {
         availability == .available
+    }
+
+    /// Whether the row should *look* usable. Distinct from `isAvailable`, which gates the actions:
+    /// an entry still being resolved is drawn like a live one but cannot be revealed or dragged
+    /// until its URL is known.
+    public var looksReachable: Bool {
+        availability == .available || availability == .resolving
+    }
+
+    /// An entry as it stands before the file system has been consulted.
+    public static func unresolved(_ file: ShelvedFile) -> ShelfItem {
+        ShelfItem(file: file, url: nil, availability: .resolving, identity: nil)
     }
 }
 
@@ -371,12 +389,18 @@ public enum FileShelfKit {
 
     /// Reads the shelf from disk. A missing or unreadable file is an empty shelf, not an error —
     /// there is nothing to recover and nothing the user could do about it.
+    ///
+    /// A file that is present but no longer decodes is different: it still holds the user's shelf,
+    /// and the next ordinary write would land on top of it. That one is moved aside first.
     public static func load(from url: URL) -> [ShelvedFile] {
         guard let data = try? Data(contentsOf: url) else { return [] }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([ShelvedFile].self, from: data)) ?? []
+        if let files = try? decoder.decode([ShelvedFile].self, from: data) { return files }
+
+        CorruptStoreFile.quarantine(at: url)
+        return []
     }
 
     /// Writes the shelf atomically, so an interrupted save leaves the previous shelf intact rather

@@ -202,8 +202,12 @@ public enum SnippetsKit {
     /// The library stored at `url`, or `[]` when the file is absent or unreadable. A missing file
     /// is the ordinary first-launch case, not an error worth reporting.
     public static func load(from url: URL) -> [Snippet] {
-        guard let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([Snippet].self, from: data) else {
+        guard let data = try? Data(contentsOf: url) else { return [] }
+
+        guard let decoded = try? JSONDecoder().decode([Snippet].self, from: data) else {
+            // Present but undecodable: the library is still in there, and the next save would
+            // overwrite it. Move it aside so there is something left to rescue.
+            CorruptStoreFile.quarantine(at: url)
             return []
         }
         return decoded

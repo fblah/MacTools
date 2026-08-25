@@ -154,12 +154,12 @@ public struct FileShelfPopoverView: View {
 
     private func shelfRow(_ item: ShelfItem) -> some View {
         HStack(spacing: s(9)) {
-            FileIcon(url: item.url, isAvailable: item.isAvailable, size: s(28))
+            FileIcon(url: item.url, isAvailable: item.looksReachable, size: s(28))
 
             VStack(alignment: .leading, spacing: s(2)) {
                 Text(item.displayName)
                     .font(.system(size: s(13), weight: .semibold))
-                    .foregroundStyle(item.isAvailable ? .primary : Color.secondary)
+                    .foregroundStyle(item.looksReachable ? .primary : Color.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -186,9 +186,9 @@ public struct FileShelfPopoverView: View {
         .padding(.vertical, s(7))
         .background(
             RoundedRectangle(cornerRadius: s(10), style: .continuous)
-                .fill(Color.secondary.opacity(item.isAvailable ? 0.12 : 0.06))
+                .fill(Color.secondary.opacity(item.looksReachable ? 0.12 : 0.06))
         )
-        .opacity(item.isAvailable ? 1 : 0.65)
+        .opacity(item.looksReachable ? 1 : 0.65)
         // Dragging out hands over the real file URL, so the receiving app copies/opens/attaches
         // the actual file rather than a description of it. An unavailable row offers an empty
         // provider: there is nothing to give, and a drag that produced a broken path would be
@@ -214,6 +214,11 @@ public struct FileShelfPopoverView: View {
         case .unresolvable:
             // The only state the user has to act on: this one does not come back on its own.
             return "Can’t be found any more — shelve it again"
+        case .resolving:
+            // Nothing is known yet, so show where it was last seen rather than a spinner: the
+            // answer usually arrives within a frame or two and a flicker of "Checking…" would be
+            // more distracting than the path the row is about to keep showing anyway.
+            return (item.file.lastKnownPath as NSString).deletingLastPathComponent
         }
     }
 

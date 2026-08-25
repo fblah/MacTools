@@ -41,6 +41,15 @@ public final class FileShelfStore: ObservableObject {
     /// track of the second claim on the same URL.
     private var accessedURLs: [UUID: URL] = [:]
 
+    /// The in-flight background resolve, if any. Kept so a newer one can replace it rather than
+    /// racing it.
+    private var resolveTask: Task<Void, Never>?
+
+    /// Bumped by every assignment to `items`. A resolve that finishes after the shelf has moved on
+    /// — a row removed, the shelf cleared, a fresh drop — is answering a question about a list that
+    /// no longer exists, and adopting it would resurrect what the user just deleted.
+    private var mutationGeneration: UInt64 = 0
+
     public convenience init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
@@ -59,9 +68,14 @@ public final class FileShelfStore: ObservableObject {
         shelfFileURL = directory.appendingPathComponent("shelf.json")
         FileShelfKit.prepareDirectory(directory)
 
-        // Resolve at startup rather than lazily per row: the count in the menu bar has to be
-        // truthful the moment the icon appears, and that means knowing what is still there.
-        adopt(FileShelfKit.load(from: shelfFileURL).map { FileShelfKit.resolveItem($0) }, persist: false)
+        // The rows appear immediately and the file system is consulted behind them. Resolving is
+        // one bookmark resolution per row — two, for an entry that needs the unscoped retry — and
+        // a shelf near its cap on a slow or absent volume would otherwise spend that whole time
+        // blocking the main actor before the tray icon is even placed. The count in the menu bar
+        // is right either way: resolving decides whether a row is *reachable*, never whether it
+        // exists.
+        adopt(FileShelfKit.load(from: shelfFileURL).map(ShelfItem.unresolved), persist: false)
+        scheduleResolve(persist: false)
     }
 
     // MARK: - Shelving
@@ -162,10 +176,11 @@ public final class FileShelfStore: ObservableObject {
 
     // MARK: - Row actions
 
-    /// Re-resolves every entry against the file system. Cheap enough to run on every popover open,
-    /// which is what keeps a row honest after the user deleted the file behind the shelf's back.
+    /// Re-resolves every entry against the file system, off the main actor. Runs on every popover
+    /// open, which is what keeps a row honest after the user deleted the file behind the shelf's
+    /// back — and it returns immediately, so opening the panel never waits on a sleeping disk.
     public func refresh() {
-        adopt(resolvedItems(), persist: true)
+        scheduleResolve(persist: true)
     }
 
     /// Shows the file in Finder. An entry that no longer resolves says so instead of opening a
@@ -210,11 +225,22 @@ public final class FileShelfStore: ObservableObject {
     /// die with the process anyway, but balancing them explicitly keeps the accounting honest and
     /// makes a leak visible in testing rather than in a long-running session.
     public func releaseAllAccess() {
+        resolveTask?.cancel()
+        resolveTask = nil
         accessedURLs.values.forEach { $0.stopAccessingSecurityScopedResource() }
         accessedURLs.removeAll()
     }
 
     // MARK: - Private
+
+    /// Awaits the background resolve currently in flight, if there is one.
+    ///
+    /// Nothing in the app calls this — every resolve ends by adopting its own result on the main
+    /// actor — but a test that changes the file system and then asks what the shelf thinks has to
+    /// wait for the answer it triggered.
+    func settle() async {
+        await resolveTask?.value
+    }
 
     /// Every entry re-resolved against the file system as it is right now.
     ///
@@ -223,6 +249,29 @@ public final class FileShelfStore: ObservableObject {
     /// at some earlier resolve and a file can have been moved, deleted or re-saved since.
     private func resolvedItems() -> [ShelfItem] {
         items.map { FileShelfKit.resolveItem($0.file) }
+    }
+
+    /// Re-resolves the shelf on a background executor and adopts the answer on the main actor.
+    ///
+    /// `Task.detached` rather than a plain `Task`: this type is `@MainActor`, so an inherited-context
+    /// task would run the resolution right back on the actor it is trying to keep free.
+    private func scheduleResolve(persist: Bool) {
+        let files = items.map(\.file)
+        guard !files.isEmpty else { return }
+
+        let generation = mutationGeneration
+        resolveTask?.cancel()
+        resolveTask = Task { [weak self] in
+            let resolved = await Task.detached(priority: .userInitiated) {
+                files.map { FileShelfKit.resolveItem($0) }
+            }.value
+
+            guard !Task.isCancelled, let self else { return }
+            // The shelf may have been edited while the disk was being asked. That edit is the newer
+            // truth; this answer describes a list that no longer exists.
+            guard self.mutationGeneration == generation else { return }
+            self.adopt(resolved, persist: persist)
+        }
     }
 
     /// The single place `items` is assigned. It reconciles security-scoped access with the new
@@ -234,6 +283,7 @@ public final class FileShelfStore: ObservableObject {
     private func adopt(_ newItems: [ShelfItem], persist: Bool) {
         reconcileAccess(with: newItems)
         items = newItems
+        mutationGeneration &+= 1
 
         if persist {
             FileShelfKit.write(newItems.map(\.file), to: shelfFileURL)
