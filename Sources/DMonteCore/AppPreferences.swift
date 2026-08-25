@@ -140,7 +140,8 @@ public enum AppDefaults {
             DefaultsKey.driveEjectorConfirmsEjectAll: true,
             DefaultsKey.scratchpadFontSize: 13,
             DefaultsKey.networkInfoFetchesPublicIPAutomatically: false,
-            DefaultsKey.videoSplitterClipSeconds: VideoSplitterKit.defaultClipLengthSeconds
+            DefaultsKey.videoSplitterClipSeconds: VideoSplitterKit.defaultClipLengthSeconds,
+            DefaultsKey.fileShelfConfirmsClearAll: true
         ])
     }
 }

@@ -42,6 +42,7 @@ HELPERS=(
   "DMonteScratchpad|DMonte Scratchpad.app|ScratchpadInfo.plist"
   "DMonteNetworkInfo|DMonte Network Info.app|NetworkInfoInfo.plist"
   "DMonteVideoSplitter|DMonte Video Splitter.app|VideoSplitterInfo.plist"
+  "DMonteFileShelf|DMonte File Shelf.app|FileShelfInfo.plist"
 )
 
 stamp_version() {
