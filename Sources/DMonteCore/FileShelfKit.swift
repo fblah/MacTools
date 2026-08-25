@@ -116,6 +116,17 @@ public struct ShelfItem: Sendable, Identifiable, Equatable {
         availability == .available || availability == .resolving
     }
 
+    /// The remembered file name to take a *kind* icon from while the entry is being resolved, or
+    /// `nil` once its real icon (or its absence) is known.
+    ///
+    /// Deliberately the name and not the path: the icon for "a .txt document" is honest about an
+    /// entry nobody has checked yet, whereas asking the file system about `lastKnownPath` would
+    /// borrow the icon of whatever happens to sit there now — the very thing an unresolved row
+    /// must not do.
+    public var pendingIconFileName: String? {
+        availability == .resolving ? file.displayName : nil
+    }
+
     /// An entry as it stands before the file system has been consulted.
     public static func unresolved(_ file: ShelvedFile) -> ShelfItem {
         ShelfItem(file: file, url: nil, availability: .resolving, identity: nil)

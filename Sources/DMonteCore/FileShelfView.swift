@@ -154,7 +154,12 @@ public struct FileShelfPopoverView: View {
 
     private func shelfRow(_ item: ShelfItem) -> some View {
         HStack(spacing: s(9)) {
-            FileIcon(url: item.url, isAvailable: item.looksReachable, size: s(28))
+            FileIcon(
+                url: item.url,
+                isAvailable: item.isAvailable,
+                pendingFileName: item.pendingIconFileName,
+                size: s(28)
+            )
 
             VStack(alignment: .leading, spacing: s(2)) {
                 Text(item.displayName)
@@ -464,14 +469,24 @@ final class DroppedURLCollector {
 /// The Finder icon for a shelved file, which is what people actually recognise a file by. An
 /// entry that no longer resolves falls back to a generic question-marked document rather than
 /// borrowing the icon of whatever happens to sit at its old path now.
+///
+/// An entry that has merely not been *checked* yet is a third case, and must not get the
+/// question mark: that glyph says "this is gone", and showing it on every row for the length of a
+/// background resolve would say it about a shelf that is perfectly intact. Those rows get the icon
+/// for their kind of file, derived from the remembered name alone.
 private struct FileIcon: View {
     var url: URL?
     var isAvailable: Bool
+    var pendingFileName: String?
     var size: CGFloat
 
     var body: some View {
         if isAvailable, let url {
             Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: size, height: size)
+        } else if let pendingFileName {
+            Image(nsImage: NSWorkspace.shared.icon(for: Self.type(of: pendingFileName)))
                 .resizable()
                 .frame(width: size, height: size)
         } else {
@@ -481,6 +496,12 @@ private struct FileIcon: View {
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: size, height: size)
         }
+    }
+
+    /// The type for a file name, falling back to a plain document rather than to nothing so the
+    /// row always has an icon of the right shape.
+    private static func type(of fileName: String) -> UTType {
+        UTType(filenameExtension: (fileName as NSString).pathExtension) ?? .data
     }
 }
 

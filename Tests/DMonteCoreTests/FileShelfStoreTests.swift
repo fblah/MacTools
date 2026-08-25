@@ -364,6 +364,45 @@ final class FileShelfStoreTests: XCTestCase {
         XCTAssertEqual(store.items.count, 1, "The removal is the newer truth and has to survive the resolve")
     }
 
+    /// The question-mark glyph means "this is gone". A row that has merely not been checked yet
+    /// must not wear it, or an intact shelf says it has lost everything for the length of a resolve.
+    func testAnUncheckedRowCarriesAKindIconRatherThanTheMissingGlyph() throws {
+        let url = try makeFile(named: "notes.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+
+        XCTAssertEqual(relaunched.items[0].pendingIconFileName, "notes.txt")
+    }
+
+    func testAResolvedRowHasNoPendingIconName() async throws {
+        let url = try makeFile(named: "notes.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+        await relaunched.settle()
+
+        XCTAssertNil(
+            relaunched.items[0].pendingIconFileName,
+            "Once resolved the row has its real icon and must not fall back to a kind icon"
+        )
+    }
+
+    /// Clearing the shelf has to call off the pass that was asking about the rows it used to have,
+    /// rather than leaving it running for an answer nobody will adopt.
+    func testClearingTheShelfCallsOffAnInFlightResolve() async throws {
+        let store = makeStore()
+        store.setConfirmsClearAll(false)
+        store.shelve(urls: [try makeFile(named: "one.txt"), try makeFile(named: "two.txt")])
+
+        store.refresh()
+        store.confirmClearAll()
+        store.refresh()
+        await store.settle()
+
+        XCTAssertTrue(store.items.isEmpty, "A cleared shelf must stay cleared")
+    }
+
     // MARK: - Removal
 
     func testRemovingTakesTheRowButLeavesTheFileAlone() throws {

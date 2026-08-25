@@ -256,11 +256,17 @@ public final class FileShelfStore: ObservableObject {
     /// `Task.detached` rather than a plain `Task`: this type is `@MainActor`, so an inherited-context
     /// task would run the resolution right back on the actor it is trying to keep free.
     private func scheduleResolve(persist: Bool) {
+        // Cancelled before the empty check, not after: a shelf that has just been cleared still has
+        // to call off the pass that was asking about the rows it used to have. Returning early with
+        // that task alive leaves work running for an answer nobody will adopt, and leaves `settle()`
+        // waiting on it.
+        resolveTask?.cancel()
+        resolveTask = nil
+
         let files = items.map(\.file)
         guard !files.isEmpty else { return }
 
         let generation = mutationGeneration
-        resolveTask?.cancel()
         resolveTask = Task { [weak self] in
             let resolved = await Task.detached(priority: .userInitiated) {
                 files.map { FileShelfKit.resolveItem($0) }
