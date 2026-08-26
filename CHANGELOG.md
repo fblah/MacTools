@@ -82,6 +82,28 @@ adheres to [Semantic Versioning](https://semver.org) and the
   shortcut. Screen capture needs Screen Recording access; without it a grab
   comes back blank rather than failing, so Grab Text now says so instead of
   reporting "no text found".
+- **Uninstall Apps** now removes the support files an app leaves behind, not
+  just the bundle. A sweep lists every leftover it found — preferences, caches,
+  containers, saved state, logs and launch agents — with the size of each, and
+  nothing is deleted until you have seen the list and confirmed it. Locations
+  matched on the app's name rather than its bundle identifier are badged as
+  such, because that is the guess that can be wrong, and so are the ones outside
+  your home folder. Everything goes to the Trash rather than being unlinked, and
+  the app list is held still while a sweep runs so a mid-sweep click cannot file
+  the report under a different app.
+- **Window Manager** can move a window to the next display and undo the last
+  arrange. ⌃⌥⌘→ sends the focused window to the next screen, keeping its
+  position and size in proportion so a half-width window stays half-width on a
+  display of a different size, and ⌃⌥⌫ puts it back where it was before the last
+  snap. The restore point is per window and remembers the position from before
+  the gesture rather than before the last write, so undoing a chord of snaps
+  returns you to where you actually started.
+- **Clean Drive** lists developer junk directory by directory rather than as one
+  total. Build outputs, dependency caches, simulator runtimes, stale archives
+  and the rest are grouped by what they are and shown per directory with its
+  own size, so you can drop a single project's derived data without agreeing to
+  everything else. An application's own bundled dependencies are never offered,
+  since deleting those breaks the app rather than reclaiming anything.
 - **Disk Usage Analyzer** can now act on what it finds. Right-click any treemap
   block or tree row for Reveal in Finder, Copy Path and Move to Trash; the same
   three commands sit in the breadcrumb bar with Finder's own shortcuts (⌘R, ⌥⌘C
