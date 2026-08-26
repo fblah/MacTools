@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+### Fixed
+- A file dragged out of **File Shelf** keeps its name. The drag offered the
+  file's contents ahead of its URL but never set a suggested name, so a
+  receiving app that took the contents — the representation it was offered
+  first — had bytes with nothing to call them and made a name up. Every
+  representation is still offered; the name now travels with them. A row whose
+  file has gone missing since the last check no longer starts a drag at all,
+  rather than starting one that delivers nothing.
+
 ## [0.16.0] — 2026-08-26
 
 ### Fixed

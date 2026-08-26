@@ -199,7 +199,7 @@ public struct FileShelfPopoverView: View {
         // provider: there is nothing to give, and a drag that produced a broken path would be
         // worse than one that produces nothing.
         .onDrag {
-            guard item.isAvailable, let url = item.url, let provider = NSItemProvider(contentsOf: url) else {
+            guard item.isAvailable, let url = item.url, let provider = FileShelfKit.dragProvider(for: url) else {
                 return NSItemProvider()
             }
             return provider

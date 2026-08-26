@@ -384,4 +384,38 @@ final class FileShelfKitTests: XCTestCase {
         try Data("{ this is not json".utf8).write(to: corrupt)
         XCTAssertTrue(FileShelfKit.load(from: corrupt).isEmpty)
     }
+    // MARK: - Dragging out
+
+    /// A file dragged off the shelf has to arrive under its own name. `NSItemProvider(contentsOf:)`
+    /// leaves `suggestedName` nil while offering the file's content type ahead of `public.file-url`,
+    /// so a receiver taking the first representation gets bytes with nothing to call them.
+    func testTheDragPayloadCarriesTheFileName() throws {
+        let url = try makeFile(named: "Quarterly Report.txt", contents: "hello")
+
+        let provider = try XCTUnwrap(FileShelfKit.dragProvider(for: url))
+
+        XCTAssertEqual(provider.suggestedName, "Quarterly Report.txt")
+    }
+
+    /// Naming it must not cost the representations that made the drag useful — a receiver that
+    /// wants the URL and one that wants the bytes both still get what they ask for.
+    func testTheDragPayloadStillOffersBothTheFileURLAndItsContents() throws {
+        let url = try makeFile(named: "notes.txt", contents: "hello")
+
+        let provider = try XCTUnwrap(FileShelfKit.dragProvider(for: url))
+
+        XCTAssertTrue(provider.registeredTypeIdentifiers.contains("public.file-url"))
+        XCTAssertTrue(
+            provider.registeredTypeIdentifiers.contains("public.plain-text"),
+            "The content representation is what lets a receiver take the bytes rather than a path"
+        )
+    }
+
+    func testAFileThatIsNoLongerThereYieldsNoDragPayload() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("absent-\(UUID().uuidString).txt")
+
+        XCTAssertNil(FileShelfKit.dragProvider(for: missing))
+    }
+
 }

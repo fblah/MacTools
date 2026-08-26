@@ -398,6 +398,25 @@ public enum FileShelfKit {
         return isDirectory.boolValue
     }
 
+    /// The drag payload for a shelved file.
+    ///
+    /// `NSItemProvider(contentsOf:)` alone is not enough: it leaves `suggestedName` nil while
+    /// registering the file's *content* type ahead of `public.file-url`, so a receiver that takes
+    /// the representation it is offered first gets bytes with no name attached and has to invent
+    /// one — which is how a file dragged out of the shelf lands somewhere as "Untitled" or worse.
+    /// Naming it here keeps every representation on offer and lets the receiver use the real one.
+    /// Returns `nil` for a file that is no longer there. The row is already gated on availability,
+    /// but that answer is as old as the last resolve and the file can go between then and the drag;
+    /// `NSItemProvider(contentsOf:)` hands back a provider regardless, which would start a drag that
+    /// delivers nothing.
+    public static func dragProvider(for url: URL) -> NSItemProvider? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let provider = NSItemProvider(contentsOf: url) else { return nil }
+
+        provider.suggestedName = url.lastPathComponent
+        return provider
+    }
+
     /// Reads the shelf from disk. A missing or unreadable file is an empty shelf, not an error —
     /// there is nothing to recover and nothing the user could do about it.
     ///
