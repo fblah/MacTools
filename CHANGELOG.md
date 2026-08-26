@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+### Fixed
+- A **store file that no longer decodes is moved aside instead of being silently
+  overwritten.** File Shelf, Snippets and Clipboard History all treated an
+  unreadable file as an empty one — right for what to *show*, since there is
+  nothing usable in it, but the next ordinary write then landed on the same path
+  and took the only copy with it. The damaged file is now renamed to
+  `<name>.corrupt` (`.corrupt-2` and so on, so a second casualty cannot clobber
+  the first) before anything is written, leaving the bytes on disk to be picked
+  over by hand. Scratchpad already salvaged damaged notes in place and is
+  unchanged.
+
+### Changed
+- **File Shelf resolves the shelf off the main thread.** Every row is a security
+  scoped bookmark, and resolving one means asking whatever volume it lives on —
+  twice, for an entry that needs the unscoped retry. Doing that inline held the
+  interface for the whole pass at launch and again on every popover open, which
+  on a full shelf pointing at a sleeping or absent network volume is a visible
+  stall before the tray icon is even placed. The rows now appear immediately and
+  fill in their availability behind you; the count is right either way, because
+  resolving decides whether a row is reachable, never whether it exists. An edit
+  made while a pass is in flight wins over it, so a removal is never undone by an
+  answer to the older question.
+- **Opening File Shelf from the Toolbox now shows the shelf.** On the first
+  launch this process is the primary instance, so nothing posts the show
+  notification that a second launch relies on, and the tile appeared to do
+  nothing but plant a menu-bar icon. It reveals the panel, as Network Info
+  already does.
+
 ### Added
 - **Audio Switcher** now saves device profiles: name the input/output pair you
   are on — "Headset", "Desk", "Meeting" — and switch back to it with one click.

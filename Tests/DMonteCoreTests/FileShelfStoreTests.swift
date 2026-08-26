@@ -274,13 +274,14 @@ final class FileShelfStoreTests: XCTestCase {
 
     /// The rule the feature turns on: an entry whose file is gone is shown as unavailable, never
     /// quietly dropped.
-    func testAnEntryWhoseFileIsDeletedStaysOnTheShelfAsUnavailable() throws {
+    func testAnEntryWhoseFileIsDeletedStaysOnTheShelfAsUnavailable() async throws {
         let store = makeStore()
         let url = try makeFile(named: "temporary.txt")
         store.shelve(urls: [url])
 
         try FileManager.default.removeItem(at: url)
         store.refresh()
+        await store.settle()
 
         XCTAssertEqual(store.items.count, 1, "A deleted file must not make its shelf row disappear")
         XCTAssertFalse(store.items[0].isAvailable)
@@ -289,16 +290,153 @@ final class FileShelfStoreTests: XCTestCase {
 
     /// Reveal has nothing to reveal for an unavailable row, so it reports that instead of opening
     /// a Finder window on a path that is not there.
-    func testRevealingAnUnavailableEntryReportsItRatherThanOpeningFinder() throws {
+    func testRevealingAnUnavailableEntryReportsItRatherThanOpeningFinder() async throws {
         let store = makeStore()
         let url = try makeFile(named: "vanishing.txt")
         store.shelve(urls: [url])
         try FileManager.default.removeItem(at: url)
         store.refresh()
+        await store.settle()
 
         store.revealInFinder(id: store.items[0].id)
 
         XCTAssertNotNil(store.statusMessage)
+    }
+
+    // MARK: - Resolving off the main actor
+
+    /// The rows are there before the file system has answered. Resolving a shelf is one bookmark
+    /// resolution per row against whatever volume it lives on; doing that inline would hold the
+    /// main actor for the whole of it before the tray icon is even placed.
+    func testARelaunchShowsItsRowsBeforeTheyHaveBeenResolved() throws {
+        let url = try makeFile(named: "parked.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+
+        XCTAssertEqual(relaunched.items.count, 1, "The count has to be right immediately — it is the tray badge")
+        XCTAssertEqual(relaunched.items[0].availability, .resolving)
+        XCTAssertFalse(relaunched.items[0].isAvailable, "Nothing is known yet, so the actions stay shut")
+        XCTAssertTrue(
+            relaunched.items[0].looksReachable,
+            "A row that has not had its turn is not known to be gone, and must not be drawn as if it were"
+        )
+    }
+
+    func testAResolvedRelaunchSettlesIntoTheRealAvailability() async throws {
+        let url = try makeFile(named: "parked.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+        await relaunched.settle()
+
+        XCTAssertEqual(relaunched.items[0].availability, .available)
+        XCTAssertTrue(relaunched.items[0].isAvailable)
+    }
+
+    /// The proof that `refresh()` no longer blocks: the file is already gone, yet the row still
+    /// reads as available until the background pass reports back.
+    func testRefreshReturnsBeforeTheFileSystemHasAnswered() async throws {
+        let store = makeStore()
+        let url = try makeFile(named: "vanishing.txt")
+        store.shelve(urls: [url])
+        try FileManager.default.removeItem(at: url)
+
+        store.refresh()
+        XCTAssertTrue(store.items[0].isAvailable, "refresh() must hand control back rather than wait on the disk")
+
+        await store.settle()
+        XCTAssertFalse(store.items[0].isAvailable, "…and the answer must land once it arrives")
+    }
+
+    /// A resolve that finishes after the shelf has moved on is answering a question about a list
+    /// that no longer exists. Adopting it would resurrect the row the user just removed.
+    func testAnEditDuringAResolveIsNotUndoneByIt() async throws {
+        let store = makeStore()
+        let first = try makeFile(named: "one.txt")
+        let second = try makeFile(named: "two.txt")
+        store.shelve(urls: [first, second])
+
+        store.refresh()
+        store.remove(id: store.items[0].id)
+        await store.settle()
+
+        XCTAssertEqual(store.items.count, 1, "The removal is the newer truth and has to survive the resolve")
+    }
+
+    /// The question-mark glyph means "this is gone". A row that has merely not been checked yet
+    /// must not wear it, or an intact shelf says it has lost everything for the length of a resolve.
+    func testAnUncheckedRowCarriesAKindIconRatherThanTheMissingGlyph() throws {
+        let url = try makeFile(named: "notes.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+
+        XCTAssertEqual(relaunched.items[0].pendingIconFileName, "notes.txt")
+    }
+
+    func testAResolvedRowHasNoPendingIconName() async throws {
+        let url = try makeFile(named: "notes.txt")
+        makeStore().shelve(urls: [url])
+
+        let relaunched = makeStore()
+        await relaunched.settle()
+
+        XCTAssertNil(
+            relaunched.items[0].pendingIconFileName,
+            "Once resolved the row has its real icon and must not fall back to a kind icon"
+        )
+    }
+
+    /// Clearing the shelf has to call off the pass that was asking about the rows it used to have,
+    /// rather than leaving it running for an answer nobody will adopt.
+    func testClearingTheShelfCallsOffAnInFlightResolve() async throws {
+        let store = makeStore()
+        store.setConfirmsClearAll(false)
+        store.shelve(urls: [try makeFile(named: "one.txt"), try makeFile(named: "two.txt")])
+
+        store.refresh()
+        store.confirmClearAll()
+        store.refresh()
+        await store.settle()
+
+        XCTAssertTrue(store.items.isEmpty, "A cleared shelf must stay cleared")
+    }
+
+    /// Cancelling a resolve has to stop the work, not just stop waiting for it. A detached task
+    /// would have kept resolving all fifty rows against a sleeping volume after the shelf had
+    /// already moved on.
+    func testACancelledResolvePassAbandonsTheShelfRatherThanFinishingIt() async throws {
+        let store = makeStore()
+        store.shelve(urls: [
+            try makeFile(named: "one.txt"),
+            try makeFile(named: "two.txt"),
+            try makeFile(named: "three.txt")
+        ])
+        let files = store.items.map(\.file)
+
+        // Deterministic rather than racy: the pass does not start until cancellation is visible,
+        // so this asserts the check inside the loop rather than winning a scheduling coin flip.
+        let pass = Task { () -> [ShelfItem] in
+            while !Task.isCancelled { await Task.yield() }
+            return await FileShelfStore.resolve(files)
+        }
+        pass.cancel()
+
+        let resolved = await pass.value
+        XCTAssertTrue(resolved.isEmpty, "A cancelled pass must abandon the shelf, not resolve every row")
+    }
+
+    /// …and an uncancelled one still answers in full, so the check above cannot pass by simply
+    /// never resolving anything.
+    func testAnUncancelledResolvePassAnswersForEveryRow() async throws {
+        let store = makeStore()
+        store.shelve(urls: [try makeFile(named: "one.txt"), try makeFile(named: "two.txt")])
+
+        let resolved = await FileShelfStore.resolve(store.items.map(\.file))
+
+        XCTAssertEqual(resolved.count, 2)
+        XCTAssertTrue(resolved.allSatisfy(\.isAvailable))
     }
 
     // MARK: - Removal
@@ -378,7 +516,7 @@ final class FileShelfStoreTests: XCTestCase {
     // MARK: - Persistence
 
     /// A second store over the same directory is what a relaunch looks like.
-    func testTheShelfSurvivesARelaunch() throws {
+    func testTheShelfSurvivesARelaunch() async throws {
         let first = try makeFile(named: "one.txt")
         let second = try makeFile(named: "two.txt")
 
@@ -387,6 +525,7 @@ final class FileShelfStoreTests: XCTestCase {
         XCTAssertEqual(original.items.count, 2)
 
         let relaunched = makeStore()
+        await relaunched.settle()
 
         XCTAssertEqual(relaunched.items.map(\.displayName), ["one.txt", "two.txt"])
         XCTAssertTrue(relaunched.items.allSatisfy(\.isAvailable))
@@ -394,7 +533,7 @@ final class FileShelfStoreTests: XCTestCase {
 
     /// …and it survives one while the file is being renamed underneath it, which is the whole
     /// reason a bookmark is stored rather than a path.
-    func testARelaunchFindsAFileThatWasRenamedInTheMeantime() throws {
+    func testARelaunchFindsAFileThatWasRenamedInTheMeantime() async throws {
         let original = try makeFile(named: "before.txt")
 
         let store = makeStore()
@@ -404,6 +543,7 @@ final class FileShelfStoreTests: XCTestCase {
         try FileManager.default.moveItem(at: original, to: renamed)
 
         let relaunched = makeStore()
+        await relaunched.settle()
 
         XCTAssertEqual(relaunched.items.count, 1)
         XCTAssertTrue(relaunched.items[0].isAvailable)

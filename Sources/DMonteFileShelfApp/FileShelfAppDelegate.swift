@@ -69,6 +69,17 @@ final class FileShelfAppDelegate: NSObject, NSApplicationDelegate {
 
         host.observeShowNotification(named: FileShelfNotifications.showWindow)
         observeStoreState()
+
+        // The distributed notification above only covers a *second* launch. On the first one this
+        // process is the primary instance, so nothing posts it, and opening File Shelf from the
+        // Toolbox tile would do nothing visible but plant a tray icon — reveal the panel here.
+        //
+        // `showWhenAnchored` rather than a one-turn `async`: the status item's button has a window
+        // before the status bar has sized it, so showing too early anchors the panel to a
+        // zero-sized rect at the screen origin and it opens in the corner of another display.
+        if CommandLine.arguments.contains("--open") {
+            panelHost?.showWhenAnchored()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

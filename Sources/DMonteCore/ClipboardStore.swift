@@ -165,8 +165,12 @@ public final class ClipboardStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: historyFileURL),
-              let decoded = try? JSONDecoder().decode([ClipboardEntry].self, from: data) else {
+        guard let data = try? Data(contentsOf: historyFileURL) else { return }
+
+        guard let decoded = try? JSONDecoder().decode([ClipboardEntry].self, from: data) else {
+            // Present but undecodable: the history is still in there, and the next save would
+            // overwrite it. Move it aside so there is something left to rescue.
+            CorruptStoreFile.quarantine(at: historyFileURL)
             return
         }
         entries = decoded
