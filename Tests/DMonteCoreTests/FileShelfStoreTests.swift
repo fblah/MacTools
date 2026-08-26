@@ -403,6 +403,42 @@ final class FileShelfStoreTests: XCTestCase {
         XCTAssertTrue(store.items.isEmpty, "A cleared shelf must stay cleared")
     }
 
+    /// Cancelling a resolve has to stop the work, not just stop waiting for it. A detached task
+    /// would have kept resolving all fifty rows against a sleeping volume after the shelf had
+    /// already moved on.
+    func testACancelledResolvePassAbandonsTheShelfRatherThanFinishingIt() async throws {
+        let store = makeStore()
+        store.shelve(urls: [
+            try makeFile(named: "one.txt"),
+            try makeFile(named: "two.txt"),
+            try makeFile(named: "three.txt")
+        ])
+        let files = store.items.map(\.file)
+
+        // Deterministic rather than racy: the pass does not start until cancellation is visible,
+        // so this asserts the check inside the loop rather than winning a scheduling coin flip.
+        let pass = Task { () -> [ShelfItem] in
+            while !Task.isCancelled { await Task.yield() }
+            return await FileShelfStore.resolve(files)
+        }
+        pass.cancel()
+
+        let resolved = await pass.value
+        XCTAssertTrue(resolved.isEmpty, "A cancelled pass must abandon the shelf, not resolve every row")
+    }
+
+    /// …and an uncancelled one still answers in full, so the check above cannot pass by simply
+    /// never resolving anything.
+    func testAnUncancelledResolvePassAnswersForEveryRow() async throws {
+        let store = makeStore()
+        store.shelve(urls: [try makeFile(named: "one.txt"), try makeFile(named: "two.txt")])
+
+        let resolved = await FileShelfStore.resolve(store.items.map(\.file))
+
+        XCTAssertEqual(resolved.count, 2)
+        XCTAssertTrue(resolved.allSatisfy(\.isAvailable))
+    }
+
     // MARK: - Removal
 
     func testRemovingTakesTheRowButLeavesTheFileAlone() throws {

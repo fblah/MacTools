@@ -251,10 +251,32 @@ public final class FileShelfStore: ObservableObject {
         items.map { FileShelfKit.resolveItem($0.file) }
     }
 
-    /// Re-resolves the shelf on a background executor and adopts the answer on the main actor.
+    /// Resolves every entry off the main actor, abandoning the pass the moment it is cancelled.
     ///
-    /// `Task.detached` rather than a plain `Task`: this type is `@MainActor`, so an inherited-context
-    /// task would run the resolution right back on the actor it is trying to keep free.
+    /// `nonisolated` rather than a `Task.detached` inside the caller. Both get the work off this
+    /// `@MainActor` type — a plain `Task` would inherit the actor and defeat the whole exercise —
+    /// but a detached task does not inherit *cancellation*, so calling off an in-flight resolve
+    /// would cancel only the waiting and let the expensive part run to the end anyway. A
+    /// `nonisolated async` function runs on the generic executor and stays in the parent's
+    /// cancellation scope, so the check below is real.
+    ///
+    /// Checked per row, not once at the top: the cost being abandoned is one bookmark resolution
+    /// per entry against a volume that may be asleep, and the whole point is not to finish the
+    /// other forty-nine.
+    /// Internal rather than private so a test can cancel a pass and watch it abandon the shelf,
+    /// which is the whole behaviour this shape exists for.
+    nonisolated static func resolve(_ files: [ShelvedFile]) async -> [ShelfItem] {
+        var resolved: [ShelfItem] = []
+        resolved.reserveCapacity(files.count)
+
+        for file in files {
+            if Task.isCancelled { return [] }
+            resolved.append(FileShelfKit.resolveItem(file))
+        }
+        return resolved
+    }
+
+    /// Re-resolves the shelf off the main actor and adopts the answer back on it.
     private func scheduleResolve(persist: Bool) {
         // Cancelled before the empty check, not after: a shelf that has just been cleared still has
         // to call off the pass that was asking about the rows it used to have. Returning early with
@@ -268,9 +290,7 @@ public final class FileShelfStore: ObservableObject {
 
         let generation = mutationGeneration
         resolveTask = Task { [weak self] in
-            let resolved = await Task.detached(priority: .userInitiated) {
-                files.map { FileShelfKit.resolveItem($0) }
-            }.value
+            let resolved = await Self.resolve(files)
 
             guard !Task.isCancelled, let self else { return }
             // The shelf may have been edited while the disk was being asked. That edit is the newer
