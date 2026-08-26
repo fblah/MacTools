@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/havokentity/MacTools/actions/workflows/ci.yml/badge.svg)](https://github.com/havokentity/MacTools/actions/workflows/ci.yml)
 
-A native macOS menu bar tool box — 26 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
+A native macOS menu bar tool box — 27 fast, focused utilities in one lightweight Swift app, inspired by the convenience of Parallels Toolbox.
 
 Open the tool box from the menu bar, search for what you need, and launch it. Each tool is a self-contained helper with its own polished SwiftUI interface; tools that run continuously (like System Monitor and Clipboard History) add their own menu bar item.
 
@@ -22,10 +22,10 @@ The app updates itself automatically via [Sparkle](https://sparkle-project.org);
 
 | Tool | What it does |
 | --- | --- |
-| **System Monitor** | Live menu bar CPU, memory, disk, network, and temperature metrics |
+| **System Monitor** | Live menu bar CPU, memory, disk, network, and temperature metrics — last‑minute sparklines and the five busiest processes by CPU or memory |
 | **Clipboard History** | Searchable clipboard with text/image/file capture, pinning, and quick‑paste (⇧⌘V) |
-| **Clean Drive** | Reclaim space by clearing caches, logs, and temp files — async, with a live freeing‑up gauge |
-| **Disk Usage Analyzer** | Interactive treemap of what's eating your disk |
+| **Clean Drive** | Reclaim space by clearing caches, logs, and temp files — async, with a live freeing‑up gauge; developer junk (DerivedData, node_modules, …) is listed directory by directory |
+| **Disk Usage Analyzer** | Interactive treemap of what's eating your disk — reveal, copy the path, or trash any row from the results |
 | **Duplicate Finder** | Find and trash byte‑identical duplicate files |
 | **Uninstall Apps** | Remove apps and their leftover support files |
 | **Download Video** | Save videos from the web (bundled, checksum‑verified yt‑dlp) |
@@ -34,8 +34,8 @@ The app updates itself automatically via [Sparkle](https://sparkle-project.org);
 | **Grab Text** | OCR any region of the screen straight to your clipboard, from a global shortcut (⌃⌥G) |
 | **QR Studio** | Generate QR codes and scan them from the screen |
 | **Color Picker** | System eyedropper with hex / RGB / HSL and a recent‑colors palette |
-| **Window Manager** | Snap windows to halves, thirds, and corners with global shortcuts (⌃⌥ + arrows) |
-| **Audio Switcher** | One‑click switching of the default input/output device |
+| **Window Manager** | Snap windows to halves, thirds, and corners with global shortcuts (⌃⌥ + arrows), move them to the next display (⌃⌥⌘→), and undo the last arrange (⌃⌥⌫) |
+| **Audio Switcher** | One‑click switching of the default input/output device, with named profiles that set both at once |
 | **Mic Control** | Mute your microphone system‑wide from the menu bar, with the tray icon showing at a glance whether you're live |
 | **Volume Mixer** | Per‑app volume sliders and per‑app output routing via CoreAudio process taps (macOS 14.2+) |
 | **Audio Router** | Virtual audio routing — install independent loopback cables for app‑to‑app audio, build mirror/aggregate devices with presets, and "listen" to any input through an output |
@@ -45,7 +45,6 @@ The app updates itself automatically via [Sparkle](https://sparkle-project.org);
 | **Keep Awake** | Prevent sleep, optionally for a set duration |
 | **Maintenance** | Handy Finder/system toggles and cache/index refreshes |
 | **Dev Tools** | JSON, Base64, JWT, URL, hashing, UUID, timestamp, and case utilities |
-| **Dev Tools** | JSON, Base64, URL, hashing, UUID, timestamp, and case utilities |
 | **Snippets** | A searchable library of reusable text — click one to paste it into the app you came from |
 | **Scratchpad** | Always‑there plain‑text notepad with named notes, autosave, and a live word count |
 | **Network Info** | Interface, local IPv4/IPv6, subnet, router, and DNS at a glance — click any value to copy; public IP only on request |

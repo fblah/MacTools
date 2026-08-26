@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-26
+
 ### Fixed
 - A **store file that no longer decodes is moved aside instead of being silently
   overwritten.** File Shelf, Snippets and Clipboard History all treated an
@@ -35,6 +37,21 @@ adheres to [Semantic Versioning](https://semver.org) and the
   already does.
 
 ### Added
+- **File Shelf**, a new menu bar tool: a drag‑and‑drop staging area for moving
+  files between apps and Spaces without keeping a Finder window open. Drop
+  files onto the menu bar icon or into the popover to park them, then drag them
+  straight back out into any app — the drag hands over the real file, so the
+  receiving app gets the original rather than a copy. Each row also offers
+  Reveal in Finder, Copy Path and Remove, and the menu bar icon carries a count
+  of what you are currently carrying.
+
+  Shelving never copies bytes: an entry is a security‑scoped bookmark to the
+  original file, so parking a 40 GB video costs the same as parking a note, the
+  shelf survives a relaunch, and an entry keeps working after the file is
+  renamed or moved. A file that has been deleted, or that lives on a disk you
+  have unplugged, stays on the shelf and is shown as unavailable rather than
+  quietly disappearing — the shelf's job is to tell you where the thing you
+  parked went, not to pretend you never parked it.
 - **Audio Switcher** now saves device profiles: name the input/output pair you
   are on — "Headset", "Desk", "Meeting" — and switch back to it with one click.
   Profiles remember devices by their CoreAudio UID rather than the numeric
@@ -106,21 +123,6 @@ adheres to [Semantic Versioning](https://semver.org) and the
   alone — and wins outright where there are fewer performance cores. The GPU
   option appears only when this ffmpeg actually has the encoder, and a stored
   preference for it falls back to the CPU on a machine that no longer offers it.
-- **File Shelf**, a new menu bar tool: a drag‑and‑drop staging area for moving
-  files between apps and Spaces without keeping a Finder window open. Drop
-  files onto the menu bar icon or into the popover to park them, then drag them
-  straight back out into any app — the drag hands over the real file, so the
-  receiving app gets the original rather than a copy. Each row also offers
-  Reveal in Finder, Copy Path and Remove, and the menu bar icon carries a count
-  of what you are currently carrying.
-
-  Shelving never copies bytes: an entry is a security‑scoped bookmark to the
-  original file, so parking a 40 GB video costs the same as parking a note, the
-  shelf survives a relaunch, and an entry keeps working after the file is
-  renamed or moved. A file that has been deleted, or that lives on a disk you
-  have unplugged, stays on the shelf and is shown as unavailable rather than
-  quietly disappearing — the shelf's job is to tell you where the thing you
-  parked went, not to pretend you never parked it.
 
 ## [0.14.0] — 2026-07-21
 
@@ -585,7 +587,8 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
-[Unreleased]: https://github.com/havokentity/MacTools/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/havokentity/MacTools/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/havokentity/MacTools/releases/tag/v0.16.0
 [0.15.0]: https://github.com/havokentity/MacTools/releases/tag/v0.15.0
 [0.14.0]: https://github.com/havokentity/MacTools/releases/tag/v0.14.0
 [0.13.0]: https://github.com/havokentity/MacTools/releases/tag/v0.13.0
