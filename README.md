@@ -61,6 +61,14 @@ A few tools ask macOS for access the first time you use them, and degrade gracef
 - **Calendar** — Calendar access
 - **Audio Router** (listen to an input) — Microphone, and an admin prompt to install a loopback driver
 
+Full Disk Access is the exception: macOS never prompts for it, so it has to be granted by hand in
+System Settings → Privacy & Security → Full Disk Access. Two tools do more when it is on:
+
+- **Disk Usage Analyzer** — without it, protected folders on the boot volume go unmeasured. The
+  window says so and offers a rescan once the grant is in place; other volumes are unaffected.
+- **Download Video** — only to read Safari's cookies, which live in a protected container. Other
+  browsers' cookies need nothing, so this matters only for sites you are signed into in Safari.
+
 Clipboard history is stored locally with owner‑only permissions and never records password‑manager or transient copies.
 
 ## Building from source
