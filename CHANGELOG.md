@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-08-26
+
 ### Fixed
 - A file dragged out of **File Shelf** keeps its name. The drag offered the
   file's contents ahead of its URL but never set a suggested name, so a
@@ -618,7 +620,8 @@ Switcher, Focus Timer, Calendar, Keep Awake, Maintenance, and Dev Tools.
 - The menu bar tool box shell and the first tool, System Monitor (live CPU,
   memory, disk, network, and temperature metrics).
 
-[Unreleased]: https://github.com/havokentity/MacTools/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/havokentity/MacTools/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/havokentity/MacTools/releases/tag/v0.16.1
 [0.16.0]: https://github.com/havokentity/MacTools/releases/tag/v0.16.0
 [0.15.0]: https://github.com/havokentity/MacTools/releases/tag/v0.15.0
 [0.14.0]: https://github.com/havokentity/MacTools/releases/tag/v0.14.0
