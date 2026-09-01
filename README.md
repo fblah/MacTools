@@ -115,4 +115,7 @@ A single `DMonteCore` library holds each tool's pure, testable logic plus its Sw
 
 ## License
 
-GPL-3.0-only
+D'Monte's Tool Box is open-source software licensed under the
+[Apache License 2.0](LICENSE). Third-party executables, drivers, frameworks, and libraries
+retain their respective licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+the credits bundled with release builds.

@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+### Changed
+- Relicensed all first-party D'Monte Tool Box code and documentation from
+  GPL-3.0-only to Apache-2.0. Bundled third-party components retain their licenses.
+
 ## [0.16.1] — 2026-08-26
 
 ### Fixed

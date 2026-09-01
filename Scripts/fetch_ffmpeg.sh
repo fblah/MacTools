@@ -8,10 +8,10 @@ set -euo pipefail
 #
 # Source: https://ffmpeg.martin-riedl.de/ — native arm64 + amd64 static builds at
 # immutable, per-build URLs, each with a published <file>.zip.sha256. These are
-# GPL builds (configured with --enable-gpl --enable-libx264); MacTools itself is
-# GPLv3, so bundling them is license-compatible. ffmpeg runs as a separate child
-# process, never linked into the app. See the Video Downloader's Resources for the
-# FFmpeg credits/source pointer shipped alongside the binaries.
+# GPL builds (configured with --enable-gpl --enable-libx264). ffmpeg runs as a
+# separate child process, never linked into the Apache-2.0 MacTools application, and
+# retains its own GPL terms. See the Video Downloader's Resources for the FFmpeg
+# credits/source pointer shipped alongside the binaries.
 #
 # Bumping the pin: open https://ffmpeg.martin-riedl.de/, pick a macOS build, copy
 # its per-arch build id (the "<timestamp>_<version>" path segment) and the

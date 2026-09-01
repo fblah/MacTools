@@ -7,6 +7,7 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+LEGAL_DIR="$RESOURCES_DIR/Legal"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 INFO_PLIST="$CONTENTS_DIR/Info.plist"
 
@@ -94,6 +95,10 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
 cp "$ROOT_DIR/.build/release/DMonte" "$MACOS_DIR/DMonte"
 cp "$ROOT_DIR/Packaging/Info.plist" "$INFO_PLIST"
 cp "$ROOT_DIR/Packaging/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+mkdir -p "$LEGAL_DIR"
+cp "$ROOT_DIR/LICENSE" "$LEGAL_DIR/LICENSE"
+cp "$ROOT_DIR/NOTICE" "$LEGAL_DIR/NOTICE"
+cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$LEGAL_DIR/THIRD_PARTY_NOTICES.md"
 
 # Each helper: build its bundle, copy the binary + Info.plist, stamp the version.
 for entry in "${HELPERS[@]}"; do
