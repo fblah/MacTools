@@ -6,9 +6,22 @@ adheres to [Semantic Versioning](https://semver.org) and the
 
 ## [Unreleased]
 
+### Added
+- **Audio Router** virtual cables can now show up as **USB** devices. Each
+  installed cable has a *Shows as: Virtual | USB* switch, so cables appear in
+  apps that only list hardware devices in their pickers, such as WhatsApp.
+  Every cable ships in both builds with the same identity; switching
+  reinstalls the other build (admin prompt) and restarts Core Audio, so all
+  audio drops out for a moment.
+
 ### Changed
 - Relicensed all first-party D'Monte Tool Box code and documentation from
   GPL-3.0-only to Apache-2.0. Bundled third-party components retain their licenses.
+
+### Fixed
+- Audio Router cables build again with current Xcode, which rejects
+  BlackHole's macOS 10.10 deployment target; they now target macOS 14, the
+  app's minimum.
 
 ## [0.16.1] — 2026-08-26
 

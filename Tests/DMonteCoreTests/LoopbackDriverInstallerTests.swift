@@ -1,3 +1,4 @@
+import CoreAudio
 import XCTest
 @testable import DMonteCore
 
@@ -101,6 +102,70 @@ final class LoopbackDriverInstallerTests: XCTestCase {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
         XCTAssertEqual(LoopbackDriverInstaller.cables(inDirectory: missing), [])
+    }
+
+    // MARK: - USB / virtual transport variants
+
+    func testCablesPairWithTheirUSBVariant() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("LoopbackTest-\(UUID().uuidString)")
+        let usb = dir.appendingPathComponent("USB")
+        defer { try? fm.removeItem(at: dir) }
+        // Cable 1 ships both builds; cable 2 only the virtual one.
+        for path in ["DMonteCable1.driver", "DMonteCable2.driver", "USB/DMonteCable1.driver"] {
+            try fm.createDirectory(at: dir.appendingPathComponent(path), withIntermediateDirectories: true)
+        }
+
+        let found = LoopbackDriverInstaller.cables(inDirectory: dir)
+        // The USB subfolder is not itself mistaken for a cable.
+        XCTAssertEqual(found.map(\.id), ["DMonteCable1", "DMonteCable2"])
+        XCTAssertEqual(found[0].usbDriverURL?.standardizedFileURL, usb.appendingPathComponent("DMonteCable1.driver").standardizedFileURL)
+        XCTAssertTrue(found[0].supportsTransportSwitch)
+        XCTAssertNil(found[1].usbDriverURL)
+        XCTAssertFalse(found[1].supportsTransportSwitch)
+    }
+
+    func testDriverURLSelectsTheVariantForEachTransport() {
+        let virtual = URL(fileURLWithPath: "/Res/Cables/DMonteCable1.driver")
+        let usb = URL(fileURLWithPath: "/Res/Cables/USB/DMonteCable1.driver")
+        let cable = LoopbackDriverInstaller.LoopbackCable(
+            id: "DMonteCable1",
+            displayName: "DMonte Cable 1",
+            deviceName: "DMonte Cable 1",
+            driverURL: virtual,
+            usbDriverURL: usb
+        )
+        XCTAssertEqual(cable.driverURL(for: .virtual), virtual)
+        XCTAssertEqual(cable.driverURL(for: .usb), usb)
+        // Both variants install to the same HAL path, so one replaces the other.
+        XCTAssertEqual(virtual.lastPathComponent, usb.lastPathComponent)
+    }
+
+    func testDriverURLIsNilForUSBWhenNotShipped() {
+        let cable = LoopbackDriverInstaller.LoopbackCable(
+            id: "DMonteCable1",
+            displayName: "DMonte Cable 1",
+            deviceName: "DMonte Cable 1",
+            driverURL: URL(fileURLWithPath: "/Res/Cables/DMonteCable1.driver")
+        )
+        XCTAssertNil(cable.driverURL(for: .usb))
+    }
+
+    func testDeviceUIDMatchesBlackHolesFormat() {
+        // BlackHole builds the UID as kDriver_Name + "<channels>ch_UID".
+        let cable = LoopbackDriverInstaller.LoopbackCable(
+            id: "DMonteCable12",
+            displayName: "DMonte Cable 12",
+            deviceName: "DMonte Cable 12",
+            driverURL: URL(fileURLWithPath: "/Res/Cables/DMonteCable12.driver")
+        )
+        XCTAssertEqual(cable.deviceUID, "DMonteCable122ch_UID")
+    }
+
+    func testTransportMapsCoreAudioTransportTypes() {
+        XCTAssertEqual(LoopbackDriverInstaller.Transport(coreAudioTransportType: kAudioDeviceTransportTypeVirtual), .virtual)
+        XCTAssertEqual(LoopbackDriverInstaller.Transport(coreAudioTransportType: kAudioDeviceTransportTypeUSB), .usb)
+        XCTAssertNil(LoopbackDriverInstaller.Transport(coreAudioTransportType: kAudioDeviceTransportTypeBuiltIn))
     }
 
     func testInstallErrorMessagesAreNonEmpty() {

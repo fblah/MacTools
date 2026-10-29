@@ -52,6 +52,9 @@ public final class AudioRouterController: ObservableObject {
         public let cable: LoopbackDriverInstaller.LoopbackCable
         public var isInstalled: Bool
         public var isBusy: Bool
+        /// The transport the installed cable reports, or `nil` if not installed
+        /// or not (yet) loaded by CoreAudio.
+        public var transport: LoopbackDriverInstaller.Transport?
         public var id: String { cable.id }
     }
 
@@ -59,6 +62,9 @@ public final class AudioRouterController: ObservableObject {
     /// Whether this build bundles any cables to install.
     @Published public private(set) var canManageCables: Bool = false
     private var busyCableIDs: Set<String> = []
+    /// The transport last installed per cable, shown while CoreAudio is still
+    /// restarting and can't report the live value yet.
+    private var requestedTransports: [String: LoopbackDriverInstaller.Transport] = [:]
 
     /// Builder state.
     @Published public var mode: AudioRouterKit.RouterMode = .multiOutput {
@@ -120,10 +126,14 @@ public final class AudioRouterController: ObservableObject {
         let bundled = LoopbackDriverInstaller.bundledCables()
         canManageCables = !bundled.isEmpty
         cables = bundled.map { cable in
-            CableRow(
+            let isInstalled = LoopbackDriverInstaller.isInstalled(cable)
+            return CableRow(
                 cable: cable,
-                isInstalled: LoopbackDriverInstaller.isInstalled(cable),
-                isBusy: busyCableIDs.contains(cable.id)
+                isInstalled: isInstalled,
+                isBusy: busyCableIDs.contains(cable.id),
+                transport: isInstalled
+                    ? LoopbackDriverInstaller.installedTransport(of: cable) ?? requestedTransports[cable.id]
+                    : nil
             )
         }
         presets = RouterPresetStore.load(defaults: defaults)
@@ -157,38 +167,83 @@ public final class AudioRouterController: ObservableObject {
         }
     }
 
-    /// Installs or removes a virtual cable (admin prompt). Runs the privileged,
-    /// blocking work off the main actor and refreshes when done.
+    /// Installs or removes a virtual cable (admin prompt). New installs use the
+    /// virtual transport; switch afterwards with `setTransport(_:to:)`.
     public func setCable(_ cable: LoopbackDriverInstaller.LoopbackCable, installed: Bool) {
+        runCableOperation(
+            cable,
+            progress: "\(installed ? "Installing" : "Removing") \(cable.displayName)…",
+            success: "\(cable.displayName) \(installed ? "installed" : "removed")"
+        ) {
+            if installed {
+                try LoopbackDriverInstaller.install(cable, transport: .virtual)
+            } else {
+                try LoopbackDriverInstaller.uninstall(cable)
+            }
+        } onSuccess: { controller in
+            if installed {
+                controller.requestedTransports[cable.id] = .virtual
+            } else {
+                controller.requestedTransports.removeValue(forKey: cable.id)
+            }
+        }
+    }
+
+    /// Switches an installed cable between its virtual and USB builds by
+    /// reinstalling the other variant (admin prompt). CoreAudio restarts, so
+    /// all audio on the Mac drops out for a moment.
+    public func setTransport(
+        _ transport: LoopbackDriverInstaller.Transport,
+        for cable: LoopbackDriverInstaller.LoopbackCable
+    ) {
+        runCableOperation(
+            cable,
+            progress: "Switching \(cable.displayName) to \(transport.label)…",
+            success: "\(cable.displayName) now shows as a \(transport.label) device"
+        ) {
+            try LoopbackDriverInstaller.install(cable, transport: transport)
+        } onSuccess: { controller in
+            controller.requestedTransports[cable.id] = transport
+        }
+    }
+
+    /// Runs a privileged cable operation off the main actor (the admin prompt
+    /// blocks), marking the cable busy and reporting progress and the outcome.
+    private func runCableOperation(
+        _ cable: LoopbackDriverInstaller.LoopbackCable,
+        progress: String,
+        success: String,
+        work: @escaping @Sendable () throws -> Void,
+        onSuccess: @escaping (AudioRouterController) -> Void
+    ) {
         guard !busyCableIDs.contains(cable.id) else { return }
         busyCableIDs.insert(cable.id)
-        statusMessage = "\(installed ? "Installing" : "Removing") \(cable.displayName)…"
+        statusMessage = progress
         refresh()
         Task { [weak self] in
             let outcome: Result<Void, Error> = await Task.detached {
                 do {
-                    if installed {
-                        try LoopbackDriverInstaller.install(cable)
-                    } else {
-                        try LoopbackDriverInstaller.uninstall(cable)
-                    }
+                    try work()
                     return .success(())
                 } catch {
                     return .failure(error)
                 }
             }.value
-            await MainActor.run {
-                guard let self else { return }
-                self.busyCableIDs.remove(cable.id)
-                switch outcome {
-                case .success:
-                    self.statusMessage = "\(cable.displayName) \(installed ? "installed" : "removed")"
-                case .failure(let error):
-                    self.statusMessage = (error as? LoopbackDriverInstaller.InstallError)?.message
-                        ?? error.localizedDescription
-                }
-                self.refresh()
+            guard let self else { return }
+            self.busyCableIDs.remove(cable.id)
+            switch outcome {
+            case .success:
+                onSuccess(self)
+                self.statusMessage = success
+            case .failure(let error):
+                self.statusMessage = (error as? LoopbackDriverInstaller.InstallError)?.message
+                    ?? error.localizedDescription
             }
+            self.refresh()
+            // CoreAudio was just restarted; the cable's device reappears a
+            // moment later, so check again to pick up its live transport.
+            try? await Task.sleep(for: .seconds(2))
+            self.refresh()
         }
     }
 
@@ -438,32 +493,37 @@ public struct AudioRouterPopoverView: View {
     }
 
     private func cableRow(_ row: AudioRouterController.CableRow) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "cable.connector.horizontal")
-                .foregroundStyle(row.isInstalled ? Color.accentColor : Color.secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(row.cable.displayName)
-                    .font(.system(size: AudioRouterSizing.bodySize, weight: row.isInstalled ? .semibold : .regular))
-                    .lineLimit(1)
-                Text(row.isInstalled ? "Installed · appears as “\(row.cable.deviceName)”" : "Not installed")
-                    .font(.system(size: AudioRouterSizing.captionSize))
-                    .foregroundStyle(Color.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 0)
-            if row.isBusy {
-                ProgressView().controlSize(.small)
-            } else {
-                Button(action: { controller.setCable(row.cable, installed: !row.isInstalled) }) {
-                    Text(row.isInstalled ? "Remove" : "Install")
-                        .font(.system(size: AudioRouterSizing.bodySize, weight: .medium))
-                        .foregroundStyle(row.isInstalled ? Color.red : Color.accentColor)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "cable.connector.horizontal")
+                    .foregroundStyle(row.isInstalled ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.cable.displayName)
+                        .font(.system(size: AudioRouterSizing.bodySize, weight: row.isInstalled ? .semibold : .regular))
+                        .lineLimit(1)
+                    Text(row.isInstalled ? "Installed · appears as “\(row.cable.deviceName)”" : "Not installed")
+                        .font(.system(size: AudioRouterSizing.captionSize))
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .buttonStyle(.plain)
-                .help(row.isInstalled
-                    ? "Remove this cable from /Library/Audio/Plug-Ins/HAL (requires admin)"
-                    : "Install this cable to /Library/Audio/Plug-Ins/HAL (requires admin)")
+                Spacer(minLength: 0)
+                if row.isBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(action: { controller.setCable(row.cable, installed: !row.isInstalled) }) {
+                        Text(row.isInstalled ? "Remove" : "Install")
+                            .font(.system(size: AudioRouterSizing.bodySize, weight: .medium))
+                            .foregroundStyle(row.isInstalled ? Color.red : Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help(row.isInstalled
+                        ? "Remove this cable from /Library/Audio/Plug-Ins/HAL (requires admin)"
+                        : "Install this cable to /Library/Audio/Plug-Ins/HAL (requires admin)")
+                }
+            }
+            if row.isInstalled && row.cable.supportsTransportSwitch {
+                transportPicker(row)
             }
         }
         .padding(.vertical, AudioRouterSizing.rowVerticalPadding)
@@ -471,6 +531,34 @@ public struct AudioRouterPopoverView: View {
         .frame(minHeight: AudioRouterSizing.rowMinHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground(isSelected: row.isInstalled))
+    }
+
+    /// "Shows as: Virtual | USB". Picking the other value reinstalls the cable's
+    /// other build; until CoreAudio reports a transport the picker shows none.
+    private func transportPicker(_ row: AudioRouterController.CableRow) -> some View {
+        HStack(spacing: 8) {
+            Text("Shows as")
+                .font(.system(size: AudioRouterSizing.captionSize))
+                .foregroundStyle(Color.secondary)
+            Picker("", selection: Binding(
+                get: { row.transport },
+                set: { newValue in
+                    guard let newValue, newValue != row.transport else { return }
+                    controller.setTransport(newValue, for: row.cable)
+                }
+            )) {
+                ForEach(LoopbackDriverInstaller.Transport.allCases) { transport in
+                    Text(transport.label).tag(Optional(transport))
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(row.isBusy)
+            Spacer(minLength: 0)
+        }
+        .help("USB makes the cable visible in apps that hide virtual devices, such as WhatsApp. Switching restarts Core Audio, so all audio drops out for a moment (requires admin).")
     }
 
     // MARK: - Builder

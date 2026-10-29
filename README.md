@@ -38,7 +38,7 @@ The app updates itself automatically via [Sparkle](https://sparkle-project.org);
 | **Audio Switcher** | One‑click switching of the default input/output device, with named profiles that set both at once |
 | **Mic Control** | Mute your microphone system‑wide from the menu bar, with the tray icon showing at a glance whether you're live |
 | **Volume Mixer** | Per‑app volume sliders and per‑app output routing via CoreAudio process taps (macOS 14.2+) |
-| **Audio Router** | Virtual audio routing — install independent loopback cables for app‑to‑app audio, build mirror/aggregate devices with presets, and "listen" to any input through an output |
+| **Audio Router** | Virtual audio routing — install independent loopback cables for app‑to‑app audio (switchable to show as USB for apps like WhatsApp that hide virtual devices), build mirror/aggregate devices with presets, and "listen" to any input through an output |
 | **Focus Timer** | Pomodoro timer with a live menu bar countdown |
 | **Calendar** | Menu bar month view with your upcoming events |
 | **Drive Ejector** | Eject external volumes one at a time or all at once — internal and startup disks are never listed |

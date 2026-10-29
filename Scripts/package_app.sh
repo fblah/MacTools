@@ -134,17 +134,28 @@ cp "$ROOT_DIR/Packaging/Deno-CREDITS.txt" "$VIDEO_DOWNLOADER_RESOURCES_DIR/Deno-
 
 # Audio Router ships the pool of virtual-cable drivers in Resources/Cables, each
 # ready to be copied to /Library/Audio/Plug-Ins/HAL/ by the in-app installer.
+# The USB-transport variant of each cable goes in Resources/Cables/USB, so the
+# app can switch an installed cable between the two.
 AUDIO_ROUTER_CABLES_DIR="$HELPERS_DIR/DMonte Audio Router.app/Contents/Resources/Cables"
+AUDIO_ROUTER_USB_CABLES_DIR="$AUDIO_ROUTER_CABLES_DIR/USB"
 if [[ -n "$BLACKHOLE_POOL_DIR" && -d "$BLACKHOLE_POOL_DIR" ]] \
    && compgen -G "$BLACKHOLE_POOL_DIR/*.driver" >/dev/null; then
-  mkdir -p "$AUDIO_ROUTER_CABLES_DIR"
-  for cable in "$BLACKHOLE_POOL_DIR"/*.driver; do
-    dest="$AUDIO_ROUTER_CABLES_DIR/$(basename "$cable")"
-    rm -rf "$dest"
-    cp -R "$cable" "$dest"
-    xattr -cr "$dest" 2>/dev/null || true
-  done
-  echo "Bundled $(find "$AUDIO_ROUTER_CABLES_DIR" -maxdepth 1 -name '*.driver' | wc -l | tr -d ' ') virtual cables" >&2
+  # copy_cables <source dir> <destination dir>
+  copy_cables() {
+    mkdir -p "$2"
+    for cable in "$1"/*.driver; do
+      dest="$2/$(basename "$cable")"
+      rm -rf "$dest"
+      cp -R "$cable" "$dest"
+      xattr -cr "$dest" 2>/dev/null || true
+    done
+  }
+  copy_cables "$BLACKHOLE_POOL_DIR" "$AUDIO_ROUTER_CABLES_DIR"
+  if compgen -G "$BLACKHOLE_POOL_DIR/usb/*.driver" >/dev/null; then
+    copy_cables "$BLACKHOLE_POOL_DIR/usb" "$AUDIO_ROUTER_USB_CABLES_DIR"
+  fi
+  echo "Bundled $(find "$AUDIO_ROUTER_CABLES_DIR" -maxdepth 1 -name '*.driver' | wc -l | tr -d ' ') virtual cables" \
+    "($(find "$AUDIO_ROUTER_USB_CABLES_DIR" -maxdepth 1 -name '*.driver' 2>/dev/null | wc -l | tr -d ' ') with USB variants)" >&2
 else
   echo "note: no virtual-cable pool bundled; Audio Router cable install will be unavailable" >&2
 fi
@@ -243,7 +254,7 @@ fi
 # whole app notarizes as one unit). Sign each one's inner Mach-O, then the
 # bundle, before the helper app that contains them is sealed below.
 if [[ -d "$AUDIO_ROUTER_CABLES_DIR" ]]; then
-  for cable in "$AUDIO_ROUTER_CABLES_DIR"/*.driver; do
+  for cable in "$AUDIO_ROUTER_CABLES_DIR"/*.driver "$AUDIO_ROUTER_USB_CABLES_DIR"/*.driver; do
     [[ -d "$cable" ]] || continue
     cable_binary="$(find "$cable/Contents/MacOS" -maxdepth 1 -type f 2>/dev/null | head -n 1)"
     [[ -n "$cable_binary" ]] && sign_one "$cable_binary" "$BASE_ENTITLEMENTS"

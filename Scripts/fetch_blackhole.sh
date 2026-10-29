@@ -12,7 +12,14 @@ set -euo pipefail
 # package_app.sh re-signs each product with our Developer ID so the whole app
 # notarizes as one unit. Requires a full Xcode toolchain (xcodebuild).
 #
-# Prints the absolute path to the directory holding the built *.driver pool.
+# Every cable is built twice, with the same identity: once reporting BlackHole's
+# own "virtual" transport type, and once reporting USB (in a usb/ subfolder).
+# Some apps (e.g. WhatsApp) list only hardware transports in their device
+# pickers, so the Audio Router lets users switch an installed cable between the
+# two variants.
+#
+# Prints the absolute path to the directory holding the built pool: the virtual
+# *.driver bundles at its top level and the USB variants in usb/.
 # Exits 2 — distinct from any other failure — when the fetched source does not
 # match its pinned commit, so package_app.sh can treat that as fatal rather than
 # shipping without cables the way it does for the offline/no-Xcode case.
@@ -41,15 +48,22 @@ BLACKHOLE_COMMIT="${BLACKHOLE_COMMIT:-4fdd55ca3dcd5207caa57ccafa09587d28669fa9}"
 # apps (e.g. Discord, Zoom, OBS, Meet) with headroom.
 CABLE_COUNT="${CABLE_COUNT:-6}"
 REPO_URL="https://github.com/ExistentialAudio/BlackHole.git"
+USB_DIR="$POOL_DIR/usb"
 
-# The commit is part of the stamp so bumping the pin invalidates a cached pool.
-STAMP="v${BLACKHOLE_VERSION}-${BLACKHOLE_COMMIT}-x${CABLE_COUNT}"
+# The commit is part of the stamp so bumping the pin invalidates a cached pool;
+# "dual" marks the virtual+USB layout so single-variant caches get rebuilt.
+STAMP="v${BLACKHOLE_VERSION}-${BLACKHOLE_COMMIT}-x${CABLE_COUNT}-dual"
 
 mkdir -p "$VENDOR_DIR"
 
-# Reuse a previous pool when version + count match.
+driver_count() {
+  find "$1" -maxdepth 1 -name '*.driver' 2>/dev/null | wc -l | tr -d ' '
+}
+
+# Reuse a previous pool when version + count match and both variants are there.
 if [[ -f "$STAMP_PATH" && "$(cat "$STAMP_PATH")" == "$STAMP" ]] \
-   && [[ "$(find "$POOL_DIR" -maxdepth 1 -name '*.driver' 2>/dev/null | wc -l | tr -d ' ')" == "$CABLE_COUNT" ]]; then
+   && [[ "$(driver_count "$POOL_DIR")" == "$CABLE_COUNT" ]] \
+   && [[ "$(driver_count "$USB_DIR")" == "$CABLE_COUNT" ]]; then
   echo "$POOL_DIR"
   exit 0
 fi
@@ -72,45 +86,72 @@ if [[ "$ACTUAL_COMMIT" != "$BLACKHOLE_COMMIT" ]]; then
   exit 2
 fi
 
-mkdir -p "$POOL_DIR"
+# build_cables <destination dir> <label>: builds every cable from the source as
+# it currently stands into the destination.
+build_cables() {
+  local dest="$1" label="$2"
+  mkdir -p "$dest"
+  # Drop intermediates so the second set can't reuse objects from the first.
+  rm -rf "$SRC_DIR/build"
 
-for ((n = 1; n <= CABLE_COUNT; n++)); do
-  # kDriver_Name must be space-free: it seeds the device UID and is a
-  # preprocessor define (xcodebuild splits defines on spaces). kDevice_Name is
-  # the user-visible name in macOS Sound settings; spaces there are allowed but
-  # must be backslash-escaped so xcodebuild keeps the macro as one token.
-  driver_name="DMonteCable${n}"
-  device_name="DMonte Cable ${n}"
-  device_name_escaped="${device_name// /\\ }"
-  bundle_id="com.havokentity.mactools.loopback.cable${n}"
-  build_out="$VENDOR_DIR/build-${n}"
-  rm -rf "$build_out"
+  for ((n = 1; n <= CABLE_COUNT; n++)); do
+    # kDriver_Name must be space-free: it seeds the device UID and is a
+    # preprocessor define (xcodebuild splits defines on spaces). kDevice_Name is
+    # the user-visible name in macOS Sound settings; spaces there are allowed but
+    # must be backslash-escaped so xcodebuild keeps the macro as one token.
+    local driver_name="DMonteCable${n}"
+    local device_name="DMonte Cable ${n}"
+    local device_name_escaped="${device_name// /\\ }"
+    local bundle_id="com.havokentity.mactools.loopback.cable${n}"
+    local build_out="$VENDOR_DIR/build-${n}"
+    rm -rf "$build_out"
 
-  echo "Building cable ${n}/${CABLE_COUNT}: '${device_name}' ($bundle_id)" >&2
-  # Unsigned (source pins someone else's team id); package_app.sh re-signs.
-  xcodebuild \
-    -project "$SRC_DIR/BlackHole.xcodeproj" \
-    -target BlackHole \
-    -configuration Release \
-    CONFIGURATION_BUILD_DIR="$build_out" \
-    PRODUCT_NAME="$driver_name" \
-    PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
-    GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) kDriver_Name=\\\"${driver_name}\\\" kPlugIn_BundleID=\\\"${bundle_id}\\\" kDevice_Name=\\\"${device_name_escaped}\\\" kNumber_Of_Channels=2" \
-    CODE_SIGN_IDENTITY="" \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGNING_ALLOWED=NO \
-    DEVELOPMENT_TEAM="" \
-    >&2
+    echo "Building ${label} cable ${n}/${CABLE_COUNT}: '${device_name}' ($bundle_id)" >&2
+    # Unsigned (source pins someone else's team id); package_app.sh re-signs.
+    # The project's own deployment target (10.10) is rejected by current Xcode;
+    # build for the app's minimum macOS instead (Packaging/*Info.plist).
+    xcodebuild \
+      -project "$SRC_DIR/BlackHole.xcodeproj" \
+      -target BlackHole \
+      -configuration Release \
+      CONFIGURATION_BUILD_DIR="$build_out" \
+      MACOSX_DEPLOYMENT_TARGET=14.0 \
+      PRODUCT_NAME="$driver_name" \
+      PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
+      GCC_PREPROCESSOR_DEFINITIONS="\$(inherited) kDriver_Name=\\\"${driver_name}\\\" kPlugIn_BundleID=\\\"${bundle_id}\\\" kDevice_Name=\\\"${device_name_escaped}\\\" kNumber_Of_Channels=2" \
+      CODE_SIGN_IDENTITY="" \
+      CODE_SIGNING_REQUIRED=NO \
+      CODE_SIGNING_ALLOWED=NO \
+      DEVELOPMENT_TEAM="" \
+      >&2
 
-  built="$(find "$build_out" -maxdepth 1 -type d -name '*.driver' | head -n 1)"
-  if [[ -z "$built" ]]; then
-    echo "Cable ${n} built but produced no .driver" >&2
-    exit 1
-  fi
-  cp -R "$built" "$POOL_DIR/${driver_name}.driver"
-  xattr -cr "$POOL_DIR/${driver_name}.driver" 2>/dev/null || true
-  rm -rf "$build_out"
-done
+    local built
+    built="$(find "$build_out" -maxdepth 1 -type d -name '*.driver' | head -n 1)"
+    if [[ -z "$built" ]]; then
+      echo "Cable ${n} built but produced no .driver" >&2
+      exit 1
+    fi
+    cp -R "$built" "$dest/${driver_name}.driver"
+    xattr -cr "$dest/${driver_name}.driver" 2>/dev/null || true
+    rm -rf "$build_out"
+  done
+}
+
+# 1. The virtual set, from BlackHole's source as pinned.
+build_cables "$POOL_DIR" "virtual"
+
+# 2. The USB set. BlackHole hardcodes its transport type (once for the box, once
+# for the device) rather than exposing a macro, so patch the source. Fail closed
+# if the pinned source no longer has exactly those two sites, so a version bump
+# can't silently ship a "USB" set that still reports virtual.
+blackhole_c="$SRC_DIR/BlackHole/BlackHole.c"
+sites="$(grep -c 'kAudioDeviceTransportTypeVirtual;' "$blackhole_c" || true)"
+if [[ "$sites" != "2" ]]; then
+  echo "error: expected 2 transport-type sites in BlackHole.c, found $sites — refusing to patch" >&2
+  exit 1
+fi
+sed -i '' 's/kAudioDeviceTransportTypeVirtual;/kAudioDeviceTransportTypeUSB;/' "$blackhole_c"
+build_cables "$USB_DIR" "USB"
 
 printf '%s' "$STAMP" > "$STAMP_PATH"
 echo "$POOL_DIR"
